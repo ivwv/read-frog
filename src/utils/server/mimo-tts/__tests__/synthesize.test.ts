@@ -146,12 +146,64 @@ describe("synthesizeMimoTts", () => {
     expect(sentBody(fetchMock).audio).toEqual({ format: "mp3", voice: "冰糖" })
   })
 
-  it("omits the voice when it is empty, as the voice-design model requires", async () => {
+  it("omits the voice when it is empty", async () => {
     const fetchMock = mockResponse(successBody())
 
-    await synthesizeMimoTts(baseRequest({ voice: "", model: "mimo-v2.5-tts-voicedesign" }))
+    await synthesizeMimoTts(baseRequest({ voice: "" }))
 
     expect(sentBody(fetchMock).audio).toEqual({ format: "mp3" })
+  })
+
+  /**
+   * The reported bug. The voice-design model rejects the request outright when a
+   * preset voice rides along ("audio.voice is not supported for voice design
+   * model"), and the stored voice still holds the value chosen for
+   * `mimo-v2.5-tts` — so the omission has to key off the *model*, not off the
+   * voice happening to be empty.
+   */
+  it("drops a configured voice for the voice-design model", async () => {
+    const fetchMock = mockResponse(successBody())
+
+    await synthesizeMimoTts(
+      baseRequest({
+        model: "mimo-v2.5-tts-voicedesign",
+        voice: "冰糖",
+        stylePrompt: "温柔的女声，语速缓慢",
+      }),
+    )
+
+    expect(sentBody(fetchMock).audio).toEqual({ format: "mp3" })
+  })
+
+  it("still sends the voice for the preset model", async () => {
+    const fetchMock = mockResponse(successBody())
+
+    await synthesizeMimoTts(baseRequest({ model: "mimo-v2.5-tts", voice: "茉莉" }))
+
+    expect(sentBody(fetchMock).audio).toEqual({ format: "mp3", voice: "茉莉" })
+  })
+
+  it("treats the style instruction as required by the voice-design model", async () => {
+    const fetchMock = mockResponse(successBody())
+
+    // The API answers this with a bare "Param Incorrect", and
+    // `optimize_text_preview` does not lift the requirement, so it is caught
+    // here to give the user something actionable.
+    const error = failureOf(
+      await synthesizeMimoTts(baseRequest({ model: "mimo-v2.5-tts-voicedesign", voice: "" })),
+    )
+
+    expect(error.code).toBe("INVALID_REQUEST")
+    expect(error.message).toContain("style instruction")
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it("does not require a style instruction for the preset model", async () => {
+    const fetchMock = mockResponse(successBody())
+
+    await synthesizeMimoTts(baseRequest({ model: "mimo-v2.5-tts", stylePrompt: "" }))
+
+    expect(sentBody(fetchMock).messages).toEqual([{ role: "assistant", content: "你好世界" }])
   })
 
   it("appends the path without doubling a trailing slash on the base URL", async () => {

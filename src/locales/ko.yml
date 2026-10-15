@@ -1406,6 +1406,8 @@ options:
       audioFormatDescription: MP3는 훨씬 작습니다. WAV는 정확한 길이를 담아 더빙 시작 판단이 정확합니다.
       formatMp3: MP3 (작음)
       formatWav: WAV (정확한 길이)
+      voiceDesignedValue: 스타일 지시에서 생성
+      stylePromptRequired: 음성 디자인 모델은 스타일 지시에서 음성을 만들므로 지시를 입력해야 합니다.
       test: 미리 듣기
       testSentence: MiMo 음성 합성 테스트입니다.
   videoSubtitles:

@@ -1411,6 +1411,8 @@ options:
       audioFormatDescription: MP3 qat-qat kiçikdir. WAV dəqiq müddət daşıyır, buna görə dublaj başlama anını daha dəqiq seçir.
       formatMp3: MP3 (daha kiçik)
       formatWav: WAV (dəqiq müddət)
+      voiceDesignedValue: Təlimata görə yaradılır
+      stylePromptRequired: Səs dizaynı modeli səsi təlimatdan yaradır, buna görə təlimat yazın.
       test: Səsi yoxla
       testSentence: Bu MiMo TTS sınağıdır.
   videoSubtitles:

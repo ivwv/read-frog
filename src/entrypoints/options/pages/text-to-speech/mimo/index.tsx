@@ -71,6 +71,10 @@ export function MimoTtsSection() {
   // The design model invents a voice from the instruction, so a preset voice
   // stops applying and the instruction stops being optional.
   const voiceIsDesigned = settings.model === MIMO_TTS_VOICE_DESIGN_MODEL
+  const stylePromptIsSet = settings.stylePrompt.trim().length > 0
+  // Blocked rather than attempted-and-rejected: the API answers such a request
+  // with a bare "Param Incorrect".
+  const needsInstruction = voiceIsDesigned && !stylePromptIsSet
 
   return (
     <ConfigSection id="mimo-tts" title={i18n.t("options.tts.mimo.title")}>
@@ -163,7 +167,13 @@ export function MimoTtsSection() {
               disabled={voiceIsDesigned}
             >
               <SelectTrigger size="sm" aria-label={i18n.t("options.tts.mimo.voice")}>
-                <SelectValue render={<span />}>{settings.voice}</SelectValue>
+                {/* The stored voice is not sent for the design model, so showing
+                    it here would claim a voice that is not being used. */}
+                <SelectValue render={<span />}>
+                  {voiceIsDesigned
+                    ? i18n.t("options.tts.mimo.voiceDesignedValue")
+                    : settings.voice}
+                </SelectValue>
               </SelectTrigger>
               <SelectContent align="start">
                 <SelectGroup>
@@ -181,7 +191,11 @@ export function MimoTtsSection() {
             id="mimo-style-prompt"
             orientation="vertical"
             title={i18n.t("options.tts.mimo.stylePrompt")}
-            description={i18n.t("options.tts.mimo.stylePromptDescription")}
+            description={
+              voiceIsDesigned && !stylePromptIsSet
+                ? i18n.t("options.tts.mimo.stylePromptRequired")
+                : i18n.t("options.tts.mimo.stylePromptDescription")
+            }
           >
             <Textarea
               rows={2}
@@ -219,11 +233,17 @@ export function MimoTtsSection() {
             </Select>
           </ConfigItem>
 
-          <ConfigItem id="mimo-test" title={i18n.t("options.tts.mimo.test")}>
+          <ConfigItem
+            id="mimo-test"
+            title={i18n.t("options.tts.mimo.test")}
+            description={
+              needsInstruction ? i18n.t("options.tts.mimo.stylePromptRequired") : undefined
+            }
+          >
             <Button
               variant="outline"
               size="sm"
-              disabled={isFetching || isPlaying}
+              disabled={isFetching || isPlaying || needsInstruction}
               onClick={() => {
                 void play(i18n.t("options.tts.mimo.testSentence"), ttsConfig)
               }}

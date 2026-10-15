@@ -1411,6 +1411,8 @@ options:
       audioFormatDescription: MP3 ocupa mucho menos. WAV lleva una duración exacta, así que el doblaje puede empezarlo con más precisión.
       formatMp3: MP3 (más pequeño)
       formatWav: WAV (duración exacta)
+      voiceDesignedValue: Creada desde la instrucción
+      stylePromptRequired: El modelo de diseño crea la voz desde la instrucción, así que rellena una.
       test: Probar voz
       testSentence: Esta es una prueba de MiMo TTS.
   videoSubtitles:

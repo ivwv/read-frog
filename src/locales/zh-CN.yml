@@ -1416,6 +1416,8 @@ options:
       audioFormatDescription: MP3 体积小得多；WAV 带精确时长，配音的起播判断更准。
       formatMp3: MP3（体积小）
       formatWav: WAV（时长精确）
+      voiceDesignedValue: 由风格指令生成
+      stylePromptRequired: 音色设计模型会根据风格指令生成音色，请先填写指令。
       test: 试听
       testSentence: 这是一段 MiMo 语音合成测试。
   videoSubtitles:

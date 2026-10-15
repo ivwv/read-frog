@@ -10,7 +10,11 @@ the chosen engine, including the subtitles dubbing feature on YouTube.
 
 MiMo has no numeric rate, pitch or volume parameters — delivery is steered by a
 natural-language style instruction instead, so that field replaces the three
-dials, and a preset voice (or the voice-design model) picks the speaker.
+dials. The speaker comes either from a preset voice (`mimo-v2.5-tts`) or from the
+voice-design model (`mimo-v2.5-tts-voicedesign`), which invents a voice from that
+instruction. The design model takes no preset voice and requires the instruction,
+so a configured voice is dropped for it and an empty instruction is reported
+before a request is spent.
 
 These settings are deliberately stored in their own `storage.local` key rather
 than in the versioned config, so they need no schema version bump, no migration

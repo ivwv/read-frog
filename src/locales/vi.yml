@@ -1406,6 +1406,8 @@ options:
       audioFormatDescription: MP3 nhỏ hơn nhiều. WAV có thời lượng chính xác nên lồng tiếng canh thời điểm bắt đầu chuẩn hơn.
       formatMp3: MP3 (nhỏ hơn)
       formatWav: WAV (thời lượng chính xác)
+      voiceDesignedValue: Tạo từ chỉ dẫn
+      stylePromptRequired: Mô hình thiết kế tạo giọng từ chỉ dẫn, hãy nhập một chỉ dẫn.
       test: Nghe thử
       testSentence: Đây là bản thử MiMo TTS.
   videoSubtitles:

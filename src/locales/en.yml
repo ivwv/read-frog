@@ -1553,6 +1553,8 @@ options:
       audioFormatDescription: MP3 is far smaller. WAV carries an exact duration, so dubbing can start it more precisely.
       formatMp3: MP3 (smaller)
       formatWav: WAV (exact duration)
+      voiceDesignedValue: Designed from the instruction
+      stylePromptRequired: The design model invents a voice from the instruction, so fill one in.
       test: Test voice
       testSentence: This is a MiMo TTS test.
   videoSubtitles:

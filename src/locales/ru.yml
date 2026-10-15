@@ -1406,6 +1406,8 @@ options:
       audioFormatDescription: MP3 намного меньше. WAV содержит точную длительность, поэтому дубляж точнее определяет момент запуска.
       formatMp3: MP3 (меньше)
       formatWav: WAV (точная длительность)
+      voiceDesignedValue: Создаётся по инструкции
+      stylePromptRequired: Модель дизайна голоса создаёт голос по инструкции, поэтому заполните её.
       test: Проверить голос
       testSentence: Это проверка MiMo TTS.
   videoSubtitles:

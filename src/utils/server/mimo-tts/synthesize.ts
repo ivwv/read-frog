@@ -4,6 +4,7 @@ import type {
   MimoTtsSynthesizeWireResponse,
 } from "@/types/mimo-tts"
 import type { MimoTtsFormat } from "@/utils/mimo-tts/types"
+import { MIMO_TTS_VOICE_DESIGN_MODEL } from "@/utils/mimo-tts/constants"
 
 /** A whole cue is synthesized in one round trip; past this it is not coming back. */
 const MIMO_TTS_TIMEOUT_MS = 30_000
@@ -86,6 +87,17 @@ export async function synthesizeMimoTts(
   request: MimoTtsSynthesizeRequest,
 ): Promise<MimoTtsSynthesizeWireResponse> {
   const { text, apiKey, baseUrl, model, voice, stylePrompt, format } = request
+  const instruction = stylePrompt?.trim() ?? ""
+  // The design model invents a voice from the instruction instead of using a
+  // preset, and is strict about both halves of that contract (verified against
+  // the live API):
+  //   - sending a voice -> 400 "audio.voice is not supported for voice design model"
+  //   - sending no instruction -> 400 "user message content must not be empty
+  //     for voice design model" (`optimize_text_preview` does NOT lift this; it
+  //     only lets the *assistant* message be omitted)
+  // Both are caught here so the user gets a sentence they can act on rather
+  // than a bare "Param Incorrect".
+  const isVoiceDesign = model === MIMO_TTS_VOICE_DESIGN_MODEL
 
   if (!apiKey.trim()) {
     return failure("INVALID_API_KEY", "MiMo TTS API key is not set")
@@ -96,17 +108,23 @@ export async function synthesizeMimoTts(
   if (!text.trim()) {
     return failure("INVALID_REQUEST", "MiMo TTS received empty text")
   }
+  if (isVoiceDesign && !instruction) {
+    return failure(
+      "INVALID_REQUEST",
+      "The voice-design model invents a voice from the style instruction, so it needs one to be filled in.",
+    )
+  }
 
   const messages: MimoChatMessage[] = []
-  if (stylePrompt?.trim()) {
-    messages.push({ role: "user", content: stylePrompt.trim() })
+  if (instruction) {
+    messages.push({ role: "user", content: instruction })
   }
   messages.push({ role: "assistant", content: text })
 
-  // Omitted rather than sent empty: `voicedesign` takes no preset voice and
-  // rejects the request if one is present.
   const audio: { format: MimoTtsFormat; voice?: string } = { format }
-  if (voice.trim()) {
+  // Omitted for the design model even when a voice is configured: the stored
+  // voice belongs to `mimo-v2.5-tts`, and leaving it in fails every request.
+  if (!isVoiceDesign && voice.trim()) {
     audio.voice = voice.trim()
   }
 
