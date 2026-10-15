@@ -1677,6 +1677,8 @@ subtitles:
   dubbing:
     speakTranslated: Озвучивать переведённые субтитры
     muteOriginal: Заглушить звук исходного видео
+    originalVolume: Громкость исходного видео
+    dubbingVolume: Громкость дубляжа
   actions:
     downloadTranslated: Скачать переведённые субтитры
     downloadTranslatedPreparing: Подготовка субтитров, длинные видео могут занять больше времени

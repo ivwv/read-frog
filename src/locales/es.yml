@@ -1682,6 +1682,8 @@ subtitles:
   dubbing:
     speakTranslated: Leer en voz alta los subtítulos traducidos
     muteOriginal: Silenciar el audio original del video
+    originalVolume: Volumen del vídeo original
+    dubbingVolume: Volumen del doblaje
   actions:
     downloadTranslated: Descargar subtítulos traducidos
     downloadTranslatedPreparing: Preparando subtítulos, los videos largos pueden tardar más

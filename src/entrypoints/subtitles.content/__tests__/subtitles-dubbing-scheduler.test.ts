@@ -1,4 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import {
+  DEFAULT_DUBBING_AUDIO_SETTINGS,
+  saveDubbingAudioSettings,
+} from "@/utils/subtitles/dubbing-audio"
 import { dubbingStateAtom, subtitlesStore, translatedTrackAtom } from "../atoms"
 import { SubtitlesDubbingScheduler } from "../subtitles-dubbing-scheduler"
 
@@ -74,6 +78,7 @@ function createVideo(currentTime = 0) {
     paused: false,
     playbackRate: 1,
     muted: false,
+    volume: 1,
     addEventListener: vi.fn<(type: string, listener: EventListener) => void>(
       (type: string, listener: EventListener) => {
         listeners.set(type, listener)
@@ -126,13 +131,16 @@ function track(...cues: { start: number; end: number; translation?: string }[]) 
 }
 
 describe("subtitles dubbing scheduler", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks()
     audioInstances = []
     audioStubQueue = []
     installAudioGlobal()
     mockSynthesizeSuccess()
     mockConfig()
+    // The levels live in storage, which outlives a test; reset them so one
+    // test's setting cannot decide another's expectations.
+    await saveDubbingAudioSettings(DEFAULT_DUBBING_AUDIO_SETTINGS)
     subtitlesStore.set(translatedTrackAtom, [])
     subtitlesStore.set(dubbingStateAtom, { enabled: false, readyCount: 0 })
   })
@@ -267,6 +275,75 @@ describe("subtitles dubbing scheduler", () => {
     await scheduler.setEnabled(false)
     // Was muted by the user before enabling: keep it muted.
     expect(video.muted).toBe(true)
+  })
+
+  it("plays the dubbing voice at the stored level", async () => {
+    await saveDubbingAudioSettings({ originalVolume: 100, dubbingVolume: 40 })
+    const video = createVideo(0)
+    track({ start: 0, end: 2_000, translation: "你好" })
+    const scheduler = new SubtitlesDubbingScheduler({ videoElement: video })
+
+    await scheduler.setEnabled(true)
+
+    await vi.waitFor(() => expect(audioInstances.length).toBe(1))
+    expect(audioInstances[0]!.volume).toBeCloseTo(0.4)
+  })
+
+  it("applies the stored level to the video while it is not muted", async () => {
+    await saveDubbingAudioSettings({ originalVolume: 30, dubbingVolume: 100 })
+    const video = createVideo(0)
+    const scheduler = new SubtitlesDubbingScheduler({ videoElement: video })
+
+    await scheduler.setEnabled(true)
+
+    expect(video.volume).toBeCloseTo(0.3)
+  })
+
+  it("leaves the video's own level alone while the original is muted", async () => {
+    await saveDubbingAudioSettings({ originalVolume: 30, dubbingVolume: 100 })
+    mockConfig({ videoSubtitles: { dubbing: { enabled: true, muteOriginal: true } } })
+    const video = createVideo(0)
+    video.volume = 0.8
+    const scheduler = new SubtitlesDubbingScheduler({ videoElement: video })
+
+    await scheduler.setEnabled(true)
+
+    expect(video.muted).toBe(true)
+    // Writing the level here would make unmuting land somewhere the user never
+    // chose, so the muted branch must not touch it.
+    expect(video.volume).toBe(0.8)
+
+    // Unmuting is when the configured level takes over.
+    await scheduler.setMuteOriginal(false)
+    expect(video.muted).toBe(false)
+    expect(video.volume).toBeCloseTo(0.3)
+  })
+
+  it("restores the user's own video level when dubbing stops", async () => {
+    await saveDubbingAudioSettings({ originalVolume: 30, dubbingVolume: 100 })
+    const video = createVideo(0)
+    video.volume = 0.8
+    const scheduler = new SubtitlesDubbingScheduler({ videoElement: video })
+
+    await scheduler.setEnabled(true)
+    expect(video.volume).toBeCloseTo(0.3)
+
+    await scheduler.setEnabled(false)
+    expect(video.volume).toBe(0.8)
+  })
+
+  it("follows a level change on the sentence already speaking", async () => {
+    const video = createVideo(0)
+    track({ start: 0, end: 60_000, translation: "你好" })
+    const scheduler = new SubtitlesDubbingScheduler({ videoElement: video })
+    await scheduler.setEnabled(true)
+
+    await vi.waitFor(() => expect(audioInstances.length).toBe(1))
+    const audio = audioInstances[0]!
+
+    await scheduler.setDubbingVolume(25)
+
+    expect(audio.volume).toBeCloseTo(0.25)
   })
 
   it("speeds long audio up so it fits the cue window", async () => {

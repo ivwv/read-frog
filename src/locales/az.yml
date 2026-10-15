@@ -1675,6 +1675,8 @@ subtitles:
   dubbing:
     speakTranslated: Tərcümə edilmiş subtitrləri səsləndir
     muteOriginal: Orijinal video səsini söndür
+    originalVolume: Orijinal video səsi
+    dubbingVolume: Dublaj səsi
   actions:
     downloadTranslated: Tərcümə edilmiş subtitrləri endir
     downloadTranslatedPreparing: Subtitrlər hazırlanır, uzun videolar bir qədər vaxt apara bilər

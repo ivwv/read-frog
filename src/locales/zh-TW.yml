@@ -1687,6 +1687,8 @@ subtitles:
   dubbing:
     speakTranslated: 朗讀翻譯字幕
     muteOriginal: 靜音原始影片聲音
+    originalVolume: 原影片音量
+    dubbingVolume: 配音音量
   actions:
     downloadTranslated: 下載翻譯字幕
     downloadTranslatedPreparing: 正在準備字幕，長影片可能需要更久

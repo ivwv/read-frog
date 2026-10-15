@@ -93,6 +93,9 @@ export interface SubtitlesProvidersAdapter {
   downloadTranslatedSubtitles: () => Promise<void>
   setDubbingEnabled: (enabled: boolean) => Promise<void>
   setDubbingMuteOriginal: (mute: boolean) => Promise<void>
+  /** 0-100, the scale the settings panel and storage use. */
+  setDubbingOriginalVolume: (percent: number) => Promise<void>
+  setDubbingVolume: (percent: number) => Promise<void>
 }
 
 export class UniversalVideoAdapter implements SubtitlesProvidersAdapter {
@@ -655,6 +658,14 @@ export class UniversalVideoAdapter implements SubtitlesProvidersAdapter {
 
   setDubbingMuteOriginal = async (mute: boolean): Promise<void> => {
     await this.dubbingScheduler?.setMuteOriginal(mute)
+  }
+
+  setDubbingOriginalVolume = async (percent: number): Promise<void> => {
+    await this.dubbingScheduler?.setOriginalVolume(percent)
+  }
+
+  setDubbingVolume = async (percent: number): Promise<void> => {
+    await this.dubbingScheduler?.setDubbingVolume(percent)
   }
 
   requestAiSubtitles = async (): Promise<void> => {

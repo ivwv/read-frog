@@ -1824,6 +1824,8 @@ subtitles:
   dubbing:
     speakTranslated: Read translated subtitles aloud
     muteOriginal: Mute original video audio
+    originalVolume: Original video volume
+    dubbingVolume: Dubbing volume
   actions:
     downloadTranslated: Download translated subtitles
     downloadTranslatedPreparing: Preparing subtitles, longer videos may take a while

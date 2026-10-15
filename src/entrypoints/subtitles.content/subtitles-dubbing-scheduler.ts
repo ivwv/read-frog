@@ -5,6 +5,7 @@ import { EDGE_TTS_FALLBACK_VOICE, getDefaultTTSVoiceForLanguage } from "@/types/
 import { getLocalConfig } from "@/utils/config/storage"
 import { logger } from "@/utils/logger"
 import { getMimoTtsSettings } from "@/utils/mimo-tts/settings"
+import { getDubbingAudioSettings, toElementVolume } from "@/utils/subtitles/dubbing-audio"
 import { synthesizeSpeech } from "@/utils/tts/synthesize-speech"
 import { dubbingStateAtom, subtitlesStore, translatedTrackAtom } from "./atoms"
 
@@ -75,6 +76,12 @@ export class SubtitlesDubbingScheduler {
   private muteOriginal = false
   /** video.muted as the user left it before dubbing muted the element. */
   private userMutedState: boolean | null = null
+  /** video.volume as the user left it before dubbing took the element over. */
+  private userVolumeState: number | null = null
+  /** The video's own level while dubbing plays and it is not muted. */
+  private originalVolume = 1
+  /** The level the spoken translation is played at. */
+  private dubbingVolume = 1
   private unsubTranslatedTrack: (() => void) | null = null
   private currentAudio: HTMLAudioElement | null = null
   private currentCueKey: string | null = null
@@ -131,6 +138,21 @@ export class SubtitlesDubbingScheduler {
     this.applyMuteState()
   }
 
+  /** Takes a 0-100 level, the same scale the settings panel and storage use. */
+  async setOriginalVolume(percent: number): Promise<void> {
+    this.originalVolume = toElementVolume(percent)
+    if (!this.enabled) return
+    this.applyMuteState()
+  }
+
+  /** Takes a 0-100 level; a sentence already speaking follows the slider. */
+  async setDubbingVolume(percent: number): Promise<void> {
+    this.dubbingVolume = toElementVolume(percent)
+    if (this.currentAudio) {
+      this.currentAudio.volume = this.dubbingVolume
+    }
+  }
+
   /** Drop cached audio and stop playback; used when the translated track is replaced. */
   reset(): void {
     this.audioCache.clear()
@@ -154,14 +176,17 @@ export class SubtitlesDubbingScheduler {
     this.enabled = true
     this.publishState()
 
-    // The mute preference lives in config; read it once per enable.
+    // The mute and level preferences live outside the config; read them once
+    // per enable, before the element is taken over below.
     try {
-      const config = await getLocalConfig()
+      const [config, audio] = await Promise.all([getLocalConfig(), getDubbingAudioSettings()])
       if (runId !== this.runId) return
       this.muteOriginal = config?.videoSubtitles.dubbing.muteOriginal ?? false
+      this.originalVolume = toElementVolume(audio.originalVolume)
+      this.dubbingVolume = toElementVolume(audio.dubbingVolume)
       if (config) this.configCache = { config, at: Date.now() }
     } catch {
-      // Keep the previous value; muting is best-effort.
+      // Keep the previous values; muting and levels are best-effort.
     }
 
     this.rememberUserMutedState()
@@ -220,6 +245,15 @@ export class SubtitlesDubbingScheduler {
     if (this.userMutedState === null) {
       this.userMutedState = this.videoElement.muted
     }
+    if (this.userVolumeState === null) {
+      this.userVolumeState = this.readVideoVolume()
+    }
+  }
+
+  /** The element's own level, guarded: it is absent in some test doubles. */
+  private readVideoVolume(): number {
+    const volume = this.videoElement.volume
+    return typeof volume === "number" && Number.isFinite(volume) ? volume : 1
   }
 
   private restoreUserMutedState(): void {
@@ -227,15 +261,27 @@ export class SubtitlesDubbingScheduler {
       this.videoElement.muted = this.userMutedState
       this.userMutedState = null
     }
+    // Put back the level the user had, so turning dubbing off leaves the player
+    // exactly as it was found rather than stuck at the dubbing-time level.
+    if (this.userVolumeState !== null) {
+      this.videoElement.volume = this.userVolumeState
+      this.userVolumeState = null
+    }
   }
 
   private applyMuteState(): void {
     if (!this.enabled) return
     if (this.muteOriginal) {
       this.videoElement.muted = true
-    } else if (this.userMutedState !== null) {
+      // The level is left alone while muted: there is nothing to hear, and
+      // writing it here would make unmuting land on a level the user never set.
+      return
+    }
+
+    if (this.userMutedState !== null) {
       this.videoElement.muted = this.userMutedState
     }
+    this.videoElement.volume = this.originalVolume
   }
 
   private attachVideoListeners(): void {
@@ -364,7 +410,7 @@ export class SubtitlesDubbingScheduler {
     this.currentCueKey = key
 
     const audio = new Audio(`data:${entry.contentType};base64,${entry.audioBase64}`)
-    audio.volume = 1
+    audio.volume = this.dubbingVolume
     this.currentAudio = audio
 
     this.attachCueAudioListeners(audio, entry, cue, this.cueJoinFraction)
@@ -658,7 +704,9 @@ export class SubtitlesDubbingScheduler {
     let step = 0
     const timer = setInterval(() => {
       step++
-      audio.volume = Math.max(0, 1 - step / steps)
+      // Fade from the configured level, not from full scale, or a quiet dub
+      // would jump to full volume for the length of the fade.
+      audio.volume = this.dubbingVolume * Math.max(0, 1 - step / steps)
       if (step >= steps) {
         clearInterval(timer)
         this.releaseAudio(audio)

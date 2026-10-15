@@ -48,5 +48,6 @@
   ],
 
   // Vitest extension configuration
-  "vitest.rootConfig": "./vitest.config.ts"
+  "vitest.rootConfig": "./vitest.config.ts",
+  "commentTranslate.source": "deeplx-comment-translate.deeplx-comment-translate-deeplx"
 }

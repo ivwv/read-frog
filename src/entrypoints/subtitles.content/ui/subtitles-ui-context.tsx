@@ -21,6 +21,9 @@ interface SubtitlesUIContextValue {
   downloadTranslatedSubtitles: () => Promise<void>
   setDubbingEnabled: (enabled: boolean) => Promise<void>
   setDubbingMuteOriginal: (mute: boolean) => Promise<void>
+  /** 0-100, the scale the settings panel and storage use. */
+  setDubbingOriginalVolume: (percent: number) => Promise<void>
+  setDubbingVolume: (percent: number) => Promise<void>
   controlsConfig?: ControlsConfig
   embedded?: boolean
   openBelow?: boolean
@@ -60,6 +63,8 @@ export function SubtitlesProviders({
       downloadTranslatedSubtitles: adapter.downloadTranslatedSubtitles,
       setDubbingEnabled: adapter.setDubbingEnabled,
       setDubbingMuteOriginal: adapter.setDubbingMuteOriginal,
+      setDubbingOriginalVolume: adapter.setDubbingOriginalVolume,
+      setDubbingVolume: adapter.setDubbingVolume,
       controlsConfig: adapter.getControlsConfig(),
       embedded: adapter.embedded,
       openBelow,

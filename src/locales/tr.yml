@@ -1677,6 +1677,8 @@ subtitles:
   dubbing:
     speakTranslated: Çevrilmiş altyazıları sesli oku
     muteOriginal: Orijinal video sesini kapat
+    originalVolume: Orijinal video ses düzeyi
+    dubbingVolume: Dublaj ses düzeyi
   actions:
     downloadTranslated: Çevrilmiş altyazıları indir
     downloadTranslatedPreparing: Altyazılar hazırlanıyor, uzun videolar daha uzun sürebilir

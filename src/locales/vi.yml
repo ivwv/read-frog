@@ -1677,6 +1677,8 @@ subtitles:
   dubbing:
     speakTranslated: Đọc to phụ đề đã dịch
     muteOriginal: Tắt tiếng video gốc
+    originalVolume: Âm lượng video gốc
+    dubbingVolume: Âm lượng lồng tiếng
   actions:
     downloadTranslated: Tải phụ đề đã dịch
     downloadTranslatedPreparing: Đang chuẩn bị phụ đề, video dài có thể mất nhiều thời gian hơn

@@ -1677,6 +1677,8 @@ subtitles:
   dubbing:
     speakTranslated: 翻訳字幕を読み上げる
     muteOriginal: 元の動画の音声をミュート
+    originalVolume: 元の動画の音量
+    dubbingVolume: 吹き替えの音量
   actions:
     downloadTranslated: 翻訳字幕をダウンロード
     downloadTranslatedPreparing: 字幕を準備中。長い動画は時間がかかる場合があります
