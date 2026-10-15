@@ -1,5 +1,15 @@
 # @read-frog/extension
 
+## 1.51.1
+
+### Patch Changes
+
+- [#2344](https://github.com/mengxi-ream/read-frog/pull/2344) [`1308e8d`](https://github.com/mengxi-ream/read-frog/commit/1308e8d1be455d08ec4e907eb2c8966998abca0b) Thanks [@1thomasdavison](https://github.com/1thomasdavison)! - fix(page-translation): translate arXiv LaTeXML SVG text boxes in bilingual and translation-only modes without clipping their contents
+
+- [#2350](https://github.com/mengxi-ream/read-frog/pull/2350) [`2f5c46c`](https://github.com/mengxi-ream/read-frog/commit/2f5c46cf0aa7e29e17d0a18db100ac6b1adc3ae9) Thanks [@ananaBMaster](https://github.com/ananaBMaster)! - feat(page-translation): let hover translation use a custom key combination
+
+- [#2351](https://github.com/mengxi-ream/read-frog/pull/2351) [`f3f1806`](https://github.com/mengxi-ream/read-frog/commit/f3f1806b4255b31863dc1246b808bf6c416dc709) Thanks [@ananaBMaster](https://github.com/ananaBMaster)! - fix(options): open sidebar groups with their pages, and turn expand arrows when open
+
 ## 1.51.0
 
 ### Minor Changes
