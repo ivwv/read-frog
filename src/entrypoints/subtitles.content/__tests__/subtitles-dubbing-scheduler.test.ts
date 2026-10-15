@@ -380,6 +380,77 @@ describe("subtitles dubbing scheduler", () => {
     expect(audio.currentTime).toBeCloseTo(3, 1)
   })
 
+  /**
+   * The reported bug: above 1x, nearly every cue lost its opening words.
+   *
+   * `timeupdate` is paced in wall-clock time (~250ms), so the media time that
+   * passes between ticks is `playbackRate x 250ms`. The tick that first sees a
+   * cue therefore lands that far past its start, and the old fixed 150ms
+   * tolerance read that ordinary detection lag as "the playhead was already
+   * inside this cue" — joining part-way and clipping the first characters.
+   */
+  it("speaks a cue from its start when the tick that finds it is one cadence late", async () => {
+    const video = createVideo(0)
+    video.playbackRate = 2
+    track({ start: 1_000, end: 3_000, translation: "你好世界" })
+    audioStubQueue.push({ duration: 4 })
+    const scheduler = new SubtitlesDubbingScheduler({ videoElement: video })
+
+    // A first tick before the cue opens, as a running scheduler would have.
+    await scheduler.setEnabled(true)
+    ;(video as unknown as { currentTime: number }).currentTime = 1.4
+    video.dispatch("timeupdate")
+
+    await vi.waitFor(() => expect(audioInstances.length).toBe(1))
+    const audio = audioInstances[0]!
+    audio.emit("loadedmetadata")
+
+    // 400ms late at 2x is one tick of lag, not a mid-sentence entry: no seek.
+    expect(audio.currentTime).toBe(0)
+  })
+
+  it("still joins when a seek lands inside a cue at higher playback rates", async () => {
+    const video = createVideo(0)
+    video.playbackRate = 2
+    track({ start: 0, end: 4_000, translation: "你好世界" })
+    audioStubQueue.push({ duration: 4 })
+    const scheduler = new SubtitlesDubbingScheduler({ videoElement: video })
+    await scheduler.setEnabled(true)
+
+    await vi.waitFor(() => expect(audioInstances.length).toBe(1))
+
+    // Drag the playhead 3s into the cue.
+    ;(video as unknown as { currentTime: number }).currentTime = 3
+    video.dispatch("seeking")
+
+    await vi.waitFor(() => expect(audioInstances.length).toBe(2))
+    const audio = audioInstances[1]!
+    audio.emit("loadedmetadata")
+
+    // 75% through the cue → 75% into the audio.
+    expect(audio.currentTime).toBeCloseTo(3, 1)
+  })
+
+  it("speaks from the start when a seek lands before a cue and playback runs into it", async () => {
+    const video = createVideo(0)
+    track({ start: 2_000, end: 4_000, translation: "你好世界" })
+    audioStubQueue.push({ duration: 4 })
+    const scheduler = new SubtitlesDubbingScheduler({ videoElement: video })
+    await scheduler.setEnabled(true)
+
+    // Seek backwards to before the cue, then let playback reach it naturally.
+    ;(video as unknown as { currentTime: number }).currentTime = 1
+    video.dispatch("seeking")
+    ;(video as unknown as { currentTime: number }).currentTime = 2.3
+    video.dispatch("timeupdate")
+
+    await vi.waitFor(() => expect(audioInstances.length).toBe(1))
+    const audio = audioInstances[0]!
+    audio.emit("loadedmetadata")
+
+    expect(audio.currentTime).toBe(0)
+  })
+
   it("does not replay a sentence that already finished", async () => {
     const video = createVideo(0)
     track({ start: 0, end: 10_000, translation: "你好" })

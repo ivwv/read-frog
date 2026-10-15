@@ -17,8 +17,6 @@ const MIN_BASE_RATE = 1
 const MIN_CUE_DURATION_S = 0.2
 /** Rewriting playbackRate every tick is audible churn; ignore deltas below this. */
 const RATE_UPDATE_TOLERANCE = 0.03
-/** A seek landing this close to a cue's start plays it from the top. */
-const JOIN_TOLERANCE_MS = 150
 /** Past a cue's end a sentence may still finish (never cut mid-word) for this long. */
 const TAIL_GRACE_MS = 2_000
 /** Cross-fade given to an overrunning cue before the next one takes over. */
@@ -62,8 +60,10 @@ function toSignedValue(value: number, unit: "%" | "Hz"): string {
  * - `baseRate = remainingAudio / remainingWindow`, clamped to [1, MAX]. The
  *   window is measured in video seconds, so the result is multiplied by the
  *   video's own playbackRate to land back in wall-clock seconds per second.
- * - A seek into the middle of a cue joins the audio at the matching fraction
- *   instead of replaying the sentence from its start, which would overflow.
+ * - A cue is spoken from its start whenever it opened since the previous tick; a
+ *   cue the playhead was already inside (a seek into it, or dubbing switched on
+ *   mid-sentence) joins the audio at the matching fraction instead, because
+ *   replaying that sentence from its start would overflow the window.
  * - A cue that still overruns (rate capped) is faded out under the next one
  *   rather than cut mid-word, and a sentence is never replayed once finished.
  * - Audio for the next PREFETCH_CUES cues is synthesized ahead of the playhead,
@@ -86,6 +86,13 @@ export class SubtitlesDubbingScheduler {
   private failedKeys = new Set<string>()
   /** Cues already spoken to completion; stops a short sentence from looping. */
   private completedCueKeys = new Set<string>()
+  /**
+   * Media time the previous tick observed, or null before the first one. This is
+   * what tells a cue we caught on time apart from one we were already past.
+   */
+  private lastObservedTimeMs: number | null = null
+  /** Join offset (fraction of its audio) chosen for the cue about to start. */
+  private cueJoinFraction = 0
   private runId = 0
 
   constructor(options: SubtitlesDubbingSchedulerOptions) {
@@ -134,6 +141,8 @@ export class SubtitlesDubbingScheduler {
     this.completedCueKeys.clear()
     this.stopAudio()
     this.currentCueKey = null
+    this.cueJoinFraction = 0
+    this.lastObservedTimeMs = null
     this.publishState()
   }
 
@@ -176,6 +185,10 @@ export class SubtitlesDubbingScheduler {
     this.stopAudio()
     this.currentCueKey = null
     this.completedCueKeys.clear()
+    // A fresh enable has observed nothing yet, so a cue already underway is
+    // treated as a late entry rather than one caught on time.
+    this.lastObservedTimeMs = null
+    this.cueJoinFraction = 0
     this.detachVideoListeners()
     this.unsubTranslatedTrack?.()
     this.unsubTranslatedTrack = null
@@ -248,6 +261,9 @@ export class SubtitlesDubbingScheduler {
     this.currentCueKey = null
     // Seeking is an explicit jump: sentences may be listened to again.
     this.completedCueKeys.clear()
+    // The tick below deliberately runs with the *pre-seek* baseline still in
+    // place, so a seek that lands inside a cue is recognised as a late entry and
+    // joins part-way rather than replaying the sentence from the top.
     this.tick()
   }
 
@@ -289,7 +305,7 @@ export class SubtitlesDubbingScheduler {
     const activeCue = this.findActiveCue(track, timeMs)
 
     if (activeCue) {
-      this.playCue(activeCue)
+      this.playCue(activeCue, timeMs)
       this.applyAdaptiveRate(activeCue)
     } else {
       // Between cues. A sentence that is still speaking is allowed to finish —
@@ -306,19 +322,29 @@ export class SubtitlesDubbingScheduler {
     }
 
     this.prefetchAhead(track, activeCue)
+    // Recorded last: playCue above needs the *previous* tick's value to tell a
+    // cue that opened since that look from one it was already past.
+    this.lastObservedTimeMs = timeMs
   }
 
   private findActiveCue(track: SubtitlesFragment[], timeMs: number): SubtitlesFragment | null {
     return track.find((f) => f.start <= timeMs && f.end > timeMs && !!f.translation) ?? null
   }
 
-  private playCue(cue: SubtitlesFragment): void {
+  private playCue(cue: SubtitlesFragment, timeMs: number): void {
     const key = cueKey(cue)
 
     // Already speaking this cue, or it was spoken to the end: nothing to start.
     // (Without the completed-set a short sentence in a long cue would loop.)
     if (key === this.currentCueKey && this.currentAudio) return
     if (this.completedCueKeys.has(key)) return
+
+    // Decided once, when the cue is first targeted: a deferred cue is only
+    // started after synthesis, by which point the playhead has moved on, and the
+    // question is what was missed when the cue was found — not the wait after.
+    if (key !== this.currentCueKey) {
+      this.cueJoinFraction = this.computeJoinFraction(cue, timeMs)
+    }
 
     const cached = this.audioCache.get(key)
     if (!cached) {
@@ -343,7 +369,7 @@ export class SubtitlesDubbingScheduler {
     audio.volume = 1
     this.currentAudio = audio
 
-    this.attachCueAudioListeners(audio, entry, cue)
+    this.attachCueAudioListeners(audio, entry, cue, this.cueJoinFraction)
 
     // Start immediately to keep latency low; the settle pass corrects the rate
     // (and the join position) as soon as the duration is known.
@@ -361,9 +387,9 @@ export class SubtitlesDubbingScheduler {
     audio: HTMLAudioElement,
     entry: SynthesizedCue,
     cue: SubtitlesFragment,
+    joinFraction: number,
   ): void {
     const key = cueKey(cue)
-    const joinFraction = this.computeJoinFraction(cue)
     let positionApplied = false
     let probed = false
     // Set while a probe parks the element at its end, so the resulting `ended`
@@ -431,16 +457,34 @@ export class SubtitlesDubbingScheduler {
   }
 
   /**
-   * How far into a cue the playhead already is, as a fraction. Near the cue's
-   * start this is 0 (play the sentence from the top); after a seek into the
-   * middle it is where the audio should join so the remaining speech still fits
-   * the remaining window.
+   * How far into a cue its audio should join, as a fraction of the sentence.
+   *
+   * Zero means "say the whole thing", which is right whenever the cue opened
+   * since the previous tick: the only part of it we can have missed is the gap
+   * between ticks, and the audio is compressed to fit the window anyway.
+   *
+   * A cue that was *already* underway at the previous tick was missed for a real
+   * reason — dubbing just switched on mid-sentence, or the playhead was seeked
+   * into it — so the sentence joins part-way instead of overrunning what is left
+   * of its window. A null baseline means nothing has been observed yet, which is
+   * the switched-on-mid-cue case.
+   *
+   * The distinction is drawn against the previous tick rather than a fixed
+   * tolerance because `timeupdate` is paced in *wall-clock* time (~250 ms, per
+   * spec 15-250 ms): in media seconds the step between ticks is
+   * `playbackRate x 250 ms`, so any constant bound is exceeded by the ordinary
+   * detection lag as soon as the video plays above 1x — which is what made every
+   * cue look like a mid-sentence entry and clip its opening words.
    */
-  private computeJoinFraction(cue: SubtitlesFragment): number {
-    const elapsedMs = this.videoElement.currentTime * 1000 - cue.start
-    if (elapsedMs <= JOIN_TOLERANCE_MS) return 0
+  private computeJoinFraction(cue: SubtitlesFragment, timeMs: number): number {
+    const missedMs = timeMs - cue.start
+    if (missedMs <= 0) return 0
+
+    const previousTimeMs = this.lastObservedTimeMs
+    if (previousTimeMs !== null && cue.start > previousTimeMs) return 0
+
     const cueDurationMs = Math.max(cue.end - cue.start, 1)
-    return Math.min(elapsedMs / cueDurationMs, 0.9)
+    return Math.min(missedMs / cueDurationMs, 0.9)
   }
 
   /**
