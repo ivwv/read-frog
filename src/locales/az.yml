@@ -1392,6 +1392,27 @@ options:
         title: Səs səviyyəsi
         description: Səsin normal səviyyədən nə qədər gur və ya zəif olacağını -100 ilə 100 faiz arasında təyin edin.
       error: $1 ilə $2 arasında tam ədəd daxil edin
+    mimo:
+      title: MiMo TTS
+      engine: Səs mühərriki
+      engineDescription: Mətni hansı xidmətin səsləndirəcəyi. Söz oxuma, tərcümə mərkəzi və video dublajına tətbiq olunur.
+      engineEdge: Edge TTS (daxili, pulsuz)
+      engineMimo: MiMo TTS (Xiaomi)
+      apiKey: API açarı
+      apiKeyDescription: Yalnız aşağıdakı ünvana göndərilir. Bu cihazda saxlanılır, sinxronlaşan ayarlara daxil deyil.
+      baseUrl: API əsas ünvanı
+      model: Model
+      voice: Səs
+      voiceDesigned: Səs dizaynı modeli aşağıdakı üslub təlimatından öz səsini yaradır.
+      stylePrompt: Üslub təlimatı
+      stylePromptDescription: Təbii dillə yazın, məsələn bir az daha sürətli və təbii danış. MiMo-da sürət, ton və səs səviyyəsi üçün rəqəmsal parametr yoxdur, ona görə yuxarıdaki üç sürüşdürücü yalnız Edge TTS-ə aiddir.
+      stylePromptPlaceholder: Bir az daha sürətli və təbii danış
+      audioFormat: Audio formatı
+      audioFormatDescription: MP3 qat-qat kiçikdir. WAV dəqiq müddət daşıyır, buna görə dublaj başlama anını daha dəqiq seçir.
+      formatMp3: MP3 (daha kiçik)
+      formatWav: WAV (dəqiq müddət)
+      test: Səsi yoxla
+      testSentence: Bu MiMo TTS sınağıdır.
   videoSubtitles:
     title: Video subtitrləri
     pageDescription: İzləyərkən subtitrləri ayrıca provayder, üslub və sorğu parametrləri ilə tərcümə edin.

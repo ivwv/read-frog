@@ -1387,6 +1387,27 @@ options:
         title: Ses düzeyi
         description: Sesin kendi düzeyine göre ne kadar yüksek ya da alçak okuduğu, -100 ile 100 yüzde arasında.
       error: $1 ile $2 arasında bir tam sayı girin
+    mimo:
+      title: MiMo TTS
+      engine: Konuşma motoru
+      engineDescription: Metni hangi hizmetin seslendireceği. Kelime okuma, çeviri merkezi ve video dublajı için geçerlidir.
+      engineEdge: Edge TTS (yerleşik, ücretsiz)
+      engineMimo: MiMo TTS (Xiaomi)
+      apiKey: API anahtarı
+      apiKeyDescription: Yalnızca aşağıdaki adrese gönderilir. Bu cihazda saklanır, eşitlenen ayarlara girmez.
+      baseUrl: API temel adresi
+      model: Model
+      voice: Ses
+      voiceDesigned: Ses tasarımı modeli, aşağıdaki stil talimatından kendi sesini üretir.
+      stylePrompt: Stil talimatı
+      stylePromptDescription: Doğal dille yazın, örneğin biraz daha hızlı ve doğal konuş. MiMo'da hız, perde ve ses düzeyi için sayısal parametre yoktur, bu yüzden yukarıdaki üç kaydırıcı yalnızca Edge TTS için geçerlidir.
+      stylePromptPlaceholder: Biraz daha hızlı ve doğal konuş
+      audioFormat: Ses biçimi
+      audioFormatDescription: MP3 çok daha küçüktür. WAV tam süre taşır, bu yüzden dublaj başlangıcı daha isabetli olur.
+      formatMp3: MP3 (daha küçük)
+      formatWav: WAV (tam süre)
+      test: Sesi dene
+      testSentence: Bu bir MiMo TTS testidir.
   videoSubtitles:
     title: Video Altyazıları
     pageDescription: İzlerken altyazıları çevirin; sağlayıcı, stil ve istek ayarları ayrı tutulur.

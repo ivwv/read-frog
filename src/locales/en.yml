@@ -1534,6 +1534,27 @@ options:
         title: Volume
         description: How much louder or quieter the voice reads than its own level, from -100 to 100 percent.
       error: Enter a whole number between $1 and $2
+    mimo:
+      title: MiMo TTS
+      engine: Speech engine
+      engineDescription: Which service reads text aloud. It applies to word lookup, the translation hub, and video dubbing.
+      engineEdge: Edge TTS (built in, free)
+      engineMimo: MiMo TTS (Xiaomi)
+      apiKey: API key
+      apiKeyDescription: Sent only to the endpoint below. Stored on this device, outside the synced settings.
+      baseUrl: API base URL
+      model: Model
+      voice: Voice
+      voiceDesigned: The design model invents its own voice from the instruction below.
+      stylePrompt: Style instruction
+      stylePromptDescription: Natural language, for example speak a little faster and keep it natural. MiMo has no rate, pitch, or volume parameters, so the three dials above apply to Edge TTS only.
+      stylePromptPlaceholder: Speak a little faster, keep it natural
+      audioFormat: Audio format
+      audioFormatDescription: MP3 is far smaller. WAV carries an exact duration, so dubbing can start it more precisely.
+      formatMp3: MP3 (smaller)
+      formatWav: WAV (exact duration)
+      test: Test voice
+      testSentence: This is a MiMo TTS test.
   videoSubtitles:
     title: Video Subtitles
     pageDescription: Translate subtitles as you watch, with their own provider, style, and request settings.

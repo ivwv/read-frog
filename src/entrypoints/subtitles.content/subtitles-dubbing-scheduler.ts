@@ -1,10 +1,11 @@
 import type { Config } from "@/types/config/config"
 import type { TTSConfig } from "@/types/config/tts"
 import type { SubtitlesFragment } from "@/utils/subtitles/types"
-import { getDefaultTTSVoiceForLanguage } from "@/types/config/tts"
+import { EDGE_TTS_FALLBACK_VOICE, getDefaultTTSVoiceForLanguage } from "@/types/config/tts"
 import { getLocalConfig } from "@/utils/config/storage"
-import { sendMessage } from "@/utils/message"
 import { logger } from "@/utils/logger"
+import { getMimoTtsSettings } from "@/utils/mimo-tts/settings"
+import { synthesizeSpeech } from "@/utils/tts/synthesize-speech"
 import { dubbingStateAtom, subtitlesStore, translatedTrackAtom } from "./atoms"
 
 /** How many cues ahead of the playhead to keep synthesized audio ready. */
@@ -42,12 +43,9 @@ function cueKey(fragment: SubtitlesFragment): string {
   return `${fragment.start}\0${fragment.end}\0${fragment.translation ?? ""}`
 }
 
-function toSignedValue(value: number, unit: "%" | "Hz"): string {
-  return `${value >= 0 ? "+" : ""}${value}${unit}`
-}
-
 /**
- * Reads translated cues aloud with Edge TTS, synchronized to the video clock.
+ * Reads translated cues aloud with Edge TTS or MiMo TTS, synchronized to the
+ * video clock.
  *
  * The clock work is a control loop rather than a one-shot calculation, because a
  * spoken translation and its cue window almost never have the same length: a
@@ -601,17 +599,15 @@ export class SubtitlesDubbingScheduler {
     this.inFlight.set(key, deferred.promise)
 
     try {
-      const audioBase64 = await this.synthesize(fragment.translation!)
+      // Failures throw and are reported by the catch below, which logs the
+      // engine's own error code; there is no null result to branch on.
+      const audio = await this.synthesize(fragment.translation!)
       if (runId !== this.runId) return
-      if (audioBase64 === null) {
-        this.failedKeys.add(key)
-      } else {
-        this.audioCache.set(key, { ...audioBase64, duration: null })
-        // Synthesis may have completed a cue the playhead is already inside
-        // (e.g. dubbing was just enabled); re-evaluate what should be playing.
-        if (this.enabled && key === this.currentCueKey) {
-          this.tick()
-        }
+      this.audioCache.set(key, { ...audio, duration: null })
+      // Synthesis may have completed a cue the playhead is already inside
+      // (e.g. dubbing was just enabled); re-evaluate what should be playing.
+      if (this.enabled && key === this.currentCueKey) {
+        this.tick()
       }
     } catch (error) {
       if (runId === this.runId) {
@@ -624,29 +620,24 @@ export class SubtitlesDubbingScheduler {
     }
   }
 
-  private async synthesize(
-    text: string,
-  ): Promise<{ audioBase64: string; contentType: string } | null> {
-    const config = await this.readConfig()
+  private async synthesize(text: string): Promise<{ audioBase64: string; contentType: string }> {
+    // Read per cue rather than cached like the config: these settings are a
+    // single cheap local read, and a voice change should land on the next
+    // sentence instead of up to CONFIG_CACHE_MS later.
+    const [config, settings] = await Promise.all([this.readConfig(), getMimoTtsSettings()])
     const ttsConfig: TTSConfig = config?.tts ?? ({} as TTSConfig)
     const targetLanguage = config?.language.targetCode
-    const voice =
-      (targetLanguage ? getDefaultTTSVoiceForLanguage(targetLanguage) : undefined) ??
-      ttsConfig.defaultVoice ??
-      "en-US-AndrewMultilingualNeural"
 
-    const response = await sendMessage("edgeTtsSynthesize", {
+    return synthesizeSpeech({
       text,
-      voice,
-      rate: toSignedValue(ttsConfig.rate ?? 0, "%"),
-      pitch: toSignedValue(ttsConfig.pitch ?? 0, "Hz"),
-      volume: toSignedValue(ttsConfig.volume ?? 0, "%"),
+      ttsConfig,
+      settings,
+      // Only reached on the Edge path; MiMo uses the voice in `settings`.
+      resolveEdgeVoice: async () =>
+        (targetLanguage ? getDefaultTTSVoiceForLanguage(targetLanguage) : undefined) ??
+        ttsConfig.defaultVoice ??
+        EDGE_TTS_FALLBACK_VOICE,
     })
-
-    if (!response.ok || !response.audioBase64) {
-      return null
-    }
-    return { audioBase64: response.audioBase64, contentType: response.contentType }
   }
 
   /**

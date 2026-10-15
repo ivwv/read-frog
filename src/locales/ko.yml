@@ -1387,6 +1387,27 @@ options:
         title: 볼륨
         description: 음성 본래의 크기보다 얼마나 크거나 작게 읽을지, -100에서 100 퍼센트.
       error: $1에서 $2 사이의 정수를 입력하세요
+    mimo:
+      title: MiMo 음성 합성
+      engine: 음성 엔진
+      engineDescription: 텍스트를 읽어 줄 서비스를 선택합니다. 단어 읽기, 번역 허브, 영상 더빙에 적용됩니다.
+      engineEdge: Edge TTS (내장, 무료)
+      engineMimo: MiMo TTS (Xiaomi)
+      apiKey: API 키
+      apiKeyDescription: 아래 엔드포인트로만 전송되며 이 기기에 저장됩니다(동기화 설정 아님).
+      baseUrl: API 기본 URL
+      model: 모델
+      voice: 음성
+      voiceDesigned: 음성 디자인 모델은 아래 스타일 지시에서 음성을 생성합니다.
+      stylePrompt: 스타일 지시
+      stylePromptDescription: 자연어로 지시합니다(예를 들어 조금 더 빠르게, 자연스럽게). MiMo에는 속도·음높이·음량 수치 파라미터가 없어 위 세 슬라이더는 Edge TTS에만 적용됩니다.
+      stylePromptPlaceholder: 조금 더 빠르게, 자연스럽게
+      audioFormat: 오디오 형식
+      audioFormatDescription: MP3는 훨씬 작습니다. WAV는 정확한 길이를 담아 더빙 시작 판단이 정확합니다.
+      formatMp3: MP3 (작음)
+      formatWav: WAV (정확한 길이)
+      test: 미리 듣기
+      testSentence: MiMo 음성 합성 테스트입니다.
   videoSubtitles:
     title: 비디오 자막
     pageDescription: 영상을 보면서 자막을 번역하고, 제공업체·스타일·요청 설정을 따로 지정하세요.

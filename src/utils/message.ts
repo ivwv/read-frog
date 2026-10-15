@@ -13,6 +13,10 @@ import type {
   EdgeTTSSynthesizeWireResponse,
 } from "@/types/edge-tts"
 import type { ProviderRequestRouting } from "@/types/hosted-request"
+import type {
+  MimoTtsSynthesizeRequest,
+  MimoTtsSynthesizeWireResponse,
+} from "@/types/mimo-tts"
 import type { ProxyRequest, ProxyResponse } from "@/types/proxy-fetch"
 import type {
   TTSPlaybackStartRequest,
@@ -199,6 +203,8 @@ interface ProtocolMap {
   edgeTtsSynthesize: (data: EdgeTTSSynthesizeRequest) => Promise<EdgeTTSSynthesizeWireResponse>
   edgeTtsListVoices: () => Promise<EdgeTTSVoice[]>
   edgeTtsHealthCheck: () => Promise<EdgeTTSHealthStatus>
+  // mimo tts
+  mimoTtsSynthesize: (data: MimoTtsSynthesizeRequest) => Promise<MimoTtsSynthesizeWireResponse>
   // tts playback
   ttsPlaybackPrepare: () => Promise<{ ok: true }>
   ttsPlaybackStart: (data: TTSPlaybackStartRequest) => Promise<TTSPlaybackStartResponse>

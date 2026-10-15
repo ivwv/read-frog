@@ -1397,6 +1397,27 @@ options:
         title: 音量
         description: 相對語音本身的音量大多少或小多少，範圍 -100 到 100 個百分點。
       error: 請輸入 $1 到 $2 之間的整數
+    mimo:
+      title: MiMo 語音合成
+      engine: 語音引擎
+      engineDescription: 選擇朗讀文字所使用的服務，套用於劃詞朗讀、翻譯中心與影片配音。
+      engineEdge: Edge TTS（內建，免費）
+      engineMimo: MiMo TTS（小米）
+      apiKey: API Key
+      apiKeyDescription: 僅傳送給下方介面網址，儲存在本機，不會進入同步設定。
+      baseUrl: 介面網址
+      model: 模型
+      voice: 音色
+      voiceDesigned: 音色設計模型會依下方的風格指令自動產生音色。
+      stylePrompt: 風格指令
+      stylePromptDescription: 用自然語言描述朗讀風格，例如「語速稍快，保持自然」。MiMo 沒有語速、音調、音量數值參數，因此上方三個滑桿僅對 Edge TTS 生效。
+      stylePromptPlaceholder: 語速稍快，保持自然
+      audioFormat: 音訊格式
+      audioFormatDescription: MP3 體積小得多；WAV 帶精確時長，配音的起播判斷更準。
+      formatMp3: MP3（體積小）
+      formatWav: WAV（時長精確）
+      test: 試聽
+      testSentence: 這是一段 MiMo 語音合成測試。
   videoSubtitles:
     title: 影片字幕
     pageDescription: 邊看邊譯影片字幕，並單獨設定提供者、樣式和請求參數。

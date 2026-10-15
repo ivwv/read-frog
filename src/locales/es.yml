@@ -1392,6 +1392,27 @@ options:
         title: Volumen
         description: Cuánto más fuerte o más suave lee la voz respecto a su propio nivel, de -100 a 100 por ciento.
       error: Introduce un número entero entre $1 y $2
+    mimo:
+      title: MiMo TTS
+      engine: Motor de voz
+      engineDescription: Qué servicio lee el texto en voz alta. Se aplica a la consulta de palabras, el centro de traducción y el doblaje de vídeo.
+      engineEdge: Edge TTS (integrado, gratis)
+      engineMimo: MiMo TTS (Xiaomi)
+      apiKey: Clave de API
+      apiKeyDescription: Solo se envía al endpoint de abajo. Se guarda en este dispositivo, fuera de los ajustes sincronizados.
+      baseUrl: URL base de la API
+      model: Modelo
+      voice: Voz
+      voiceDesigned: El modelo de diseño de voz crea su propia voz a partir de la instrucción de estilo.
+      stylePrompt: Instrucción de estilo
+      stylePromptDescription: Lenguaje natural, por ejemplo habla algo más rápido y con naturalidad. MiMo no tiene parámetros de velocidad, tono ni volumen, así que los tres controles de arriba solo se aplican a Edge TTS.
+      stylePromptPlaceholder: Habla algo más rápido y con naturalidad
+      audioFormat: Formato de audio
+      audioFormatDescription: MP3 ocupa mucho menos. WAV lleva una duración exacta, así que el doblaje puede empezarlo con más precisión.
+      formatMp3: MP3 (más pequeño)
+      formatWav: WAV (duración exacta)
+      test: Probar voz
+      testSentence: Esta es una prueba de MiMo TTS.
   videoSubtitles:
     title: Subtítulos de video
     pageDescription: Traduce los subtítulos mientras ves el video, con proveedor, estilo y ajustes propios.

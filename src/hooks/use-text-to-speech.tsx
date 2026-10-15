@@ -4,6 +4,7 @@ import type {
   SurfaceByFeature,
 } from "@/types/analytics"
 import type { TTSConfig } from "@/types/config/tts"
+import type { MimoTtsSettings } from "@/utils/mimo-tts/types"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { useAtomValue } from "jotai"
 import { useRef, useState } from "react"
@@ -11,35 +12,36 @@ import { toastManager } from "@/components/ui/base-ui/toast"
 import { ANALYTICS_FEATURE, ANALYTICS_SURFACE } from "@/types/analytics"
 import { createFeatureUsageContext, trackFeatureUsed } from "@/utils/analytics"
 import { classifyFailureReason } from "@/utils/analytics-failure-reason"
-import { EDGE_TTS_FEATURE_PROVIDER } from "@/utils/analytics-provider"
+import { EDGE_TTS_FEATURE_PROVIDER, MIMO_TTS_FEATURE_PROVIDER } from "@/utils/analytics-provider"
 import { configFieldsAtomMap } from "@/utils/atoms/config"
 import { detectLanguage } from "@/utils/content/language"
 import { getRandomUUID } from "@/utils/crypto-polyfill"
 import { i18n } from "@/utils/i18n"
 import { logger } from "@/utils/logger"
 import { sendMessage } from "@/utils/message"
+import { getMimoTtsSettings } from "@/utils/mimo-tts/settings"
 import { splitTextByUtf8Bytes } from "@/utils/server/edge-tts/chunk"
+import { synthesizeSpeech } from "@/utils/tts/synthesize-speech"
 
 interface PlayAudioParams {
   text: string
   ttsConfig: TTSConfig
   analyticsContext: FeatureUsageContext<"text_to_speech"> & FeatureProviderAnalytics
+  /**
+   * Read once in `play` and threaded through, so the cache key, the synthesis
+   * call, and the reported provider all describe the same engine.
+   */
+  settings: MimoTtsSettings
   forcedVoice?: string
   // A run nobody pressed for (a layout reading a field as the answer arrives)
   // fails without a toast; pressing the trigger tries again and reports it.
   quiet?: boolean
 }
 
-interface SynthesizedAudioChunk {
-  audioBase64: string
-  contentType: string
-}
+/** A synthesized clip on its way to the offscreen player. */
+type SynthesizedAudioChunk = Awaited<ReturnType<typeof synthesizeSpeech>>
 
 const TTS_ERROR_TOAST_ID = "tts-synthesize-error"
-
-function toSignedValue(value: number, unit: "%" | "Hz"): string {
-  return `${value >= 0 ? "+" : ""}${value}${unit}`
-}
 
 export function selectTTSVoice(
   ttsConfig: TTSConfig,
@@ -91,50 +93,41 @@ async function resolveVoiceForText(
 }
 
 function getTTSFriendlyErrorDescription(error: Error): string | undefined {
-  if (error.message.includes("Edge TTS returned empty audio data")) {
+  const message = error.message
+
+  if (message.includes("Edge TTS returned empty audio data")) {
     return "The current voice may not support this language. Try switching to a matching voice."
   }
 
-  if (error.message.includes("[SYNTH_RATE_LIMITED]")) {
+  // MiMo-specific: the key and the endpoint are user-entered, so these are the
+  // two failures worth naming outright rather than showing a raw API message.
+  if (message.includes("[INVALID_API_KEY]")) {
+    return "MiMo TTS rejected the API key. Check the key in the Text to speech settings."
+  }
+
+  if (message.includes("[INVALID_REQUEST]")) {
+    return message
+  }
+
+  if (message.includes("MiMo TTS returned empty audio data") || message.includes("[EMPTY_AUDIO]")) {
+    return "MiMo TTS returned no audio. Try another voice or model."
+  }
+
+  if (message.includes("[SYNTH_RATE_LIMITED]") || message.includes("[RATE_LIMITED]")) {
     return "Too many TTS requests. Please try again in a moment."
   }
 
+  // Shared by both engines, so the wording names neither.
   if (
-    error.message.includes("[NETWORK_ERROR]") ||
-    error.message.includes("[TOKEN_FETCH_FAILED]") ||
-    error.message.includes("[TOKEN_INVALID]")
+    message.includes("[NETWORK_ERROR]") ||
+    message.includes("[SERVER_ERROR]") ||
+    message.includes("[TOKEN_FETCH_FAILED]") ||
+    message.includes("[TOKEN_INVALID]")
   ) {
-    return "Edge TTS is temporarily unavailable. Please check your network and retry."
+    return "The speech service is temporarily unavailable. Please check your network and retry."
   }
 
-  return error.message || undefined
-}
-
-async function synthesizeEdgeTTSAudioChunk(
-  chunk: string,
-  voice: string,
-  ttsConfig: TTSConfig,
-): Promise<SynthesizedAudioChunk> {
-  const response = await sendMessage("edgeTtsSynthesize", {
-    text: chunk,
-    voice,
-    rate: toSignedValue(ttsConfig.rate, "%"),
-    pitch: toSignedValue(ttsConfig.pitch, "Hz"),
-    volume: toSignedValue(ttsConfig.volume, "%"),
-  })
-
-  if (!response.ok) {
-    throw new Error(`[${response.error.code}] ${response.error.message}`)
-  }
-
-  if (!response.audioBase64) {
-    throw new Error("Edge TTS returned empty audio data")
-  }
-
-  return {
-    audioBase64: response.audioBase64,
-    contentType: response.contentType,
-  }
+  return message || undefined
 }
 
 export function useTextToSpeech(
@@ -166,7 +159,7 @@ export function useTextToSpeech(
     meta: {
       suppressToast: true,
     },
-    mutationFn: async ({ text, ttsConfig, analyticsContext, forcedVoice }) => {
+    mutationFn: async ({ text, ttsConfig, analyticsContext, settings, forcedVoice }) => {
       stop()
       shouldStopRef.current = false
 
@@ -181,6 +174,7 @@ export function useTextToSpeech(
           text,
           ttsConfig,
           analyticsContext,
+          settings,
           forcedVoice,
         })
       } catch (error) {
@@ -213,16 +207,22 @@ export function useTextToSpeech(
   async function runPlayback(
     requestId: string,
     isSuperseded: () => boolean,
-    { text, ttsConfig, analyticsContext, forcedVoice }: PlayAudioParams,
+    { text, ttsConfig, analyticsContext, settings, forcedVoice }: PlayAudioParams,
   ) {
     let didStartPlayback = false
 
-    const selectedVoice = await resolveVoiceForText(
-      text,
-      ttsConfig,
-      languageDetection.mode === "llm",
-      forcedVoice,
-    )
+    // MiMo speaks with the single voice it is configured with and has no
+    // language map, so resolving a language voice here would spend a round trip
+    // — potentially an LLM one — on a voice the engine then ignores.
+    const selectedVoice =
+      settings.engine === "mimo"
+        ? settings.voice
+        : await resolveVoiceForText(
+            text,
+            ttsConfig,
+            languageDetection.mode === "llm",
+            forcedVoice,
+          )
     if (isSuperseded()) {
       return
     }
@@ -236,6 +236,7 @@ export function useTextToSpeech(
     const fetchChunkAudio = async (chunk: string) => {
       logger.info("[TextToSpeech] Fetching chunk audio", {
         text: chunk,
+        engine: settings.engine,
         voice: selectedVoice,
         rate: ttsConfig.rate,
         pitch: ttsConfig.pitch,
@@ -246,13 +247,26 @@ export function useTextToSpeech(
           "tts-audio",
           {
             text: chunk,
+            // Every input that changes the produced bytes belongs in the key.
+            // Without the engine and its parameters, switching engines (or
+            // voices) would keep serving the cached clip from the old one.
+            engine: settings.engine,
             voice: selectedVoice,
+            model: settings.engine === "mimo" ? settings.model : undefined,
+            stylePrompt: settings.engine === "mimo" ? settings.stylePrompt : undefined,
+            format: settings.engine === "mimo" ? settings.format : undefined,
             rate: ttsConfig.rate,
             pitch: ttsConfig.pitch,
             volume: ttsConfig.volume,
           },
         ],
-        queryFn: () => synthesizeEdgeTTSAudioChunk(chunk, selectedVoice, ttsConfig),
+        queryFn: () =>
+          synthesizeSpeech({
+            text: chunk,
+            ttsConfig,
+            settings,
+            resolveEdgeVoice: async () => selectedVoice,
+          }),
         staleTime: Number.POSITIVE_INFINITY,
         gcTime: 1000 * 60 * 10,
         meta: {
@@ -320,7 +334,7 @@ export function useTextToSpeech(
 
   // `options.surface` reports a play started from somewhere other than the
   // hook's own surface (a keyboard shortcut for the toolbar's reader).
-  const play = (
+  const play = async (
     text: string,
     ttsConfig: TTSConfig,
     options?: {
@@ -329,14 +343,19 @@ export function useTextToSpeech(
       quiet?: boolean
     },
   ) => {
+    // Read once, here, so the engine that gets reported and the engine that
+    // synthesizes cannot disagree if the setting changes mid-run.
+    const settings = await getMimoTtsSettings()
+
     return playMutation.mutateAsync({
       text,
       ttsConfig,
+      settings,
       forcedVoice: options?.forcedVoice,
       quiet: options?.quiet,
       analyticsContext: {
         ...createFeatureUsageContext(ANALYTICS_FEATURE.TEXT_TO_SPEECH, options?.surface ?? surface),
-        ...EDGE_TTS_FEATURE_PROVIDER,
+        ...(settings.engine === "mimo" ? MIMO_TTS_FEATURE_PROVIDER : EDGE_TTS_FEATURE_PROVIDER),
       },
     })
   }

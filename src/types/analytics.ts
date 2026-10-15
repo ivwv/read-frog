@@ -69,6 +69,7 @@ export type NoteSavePath = (typeof NOTE_SAVE_PATHS)[number]
 export const ANALYTICS_PROVIDER = {
   BUILT_IN_AI: "read-frog-built-in-ai",
   EDGE_TTS: "edge-tts",
+  MIMO_TTS: "mimo-tts",
   UNKNOWN: "unknown",
 } as const
 

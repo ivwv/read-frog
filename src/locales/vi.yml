@@ -1387,6 +1387,27 @@ options:
         title: Âm lượng
         description: Giọng đọc to hay nhỏ hơn mức vốn có của nó bao nhiêu, từ -100 đến 100 phần trăm.
       error: Hãy nhập một số nguyên từ $1 đến $2
+    mimo:
+      title: MiMo TTS
+      engine: Bộ máy đọc
+      engineDescription: Dịch vụ đọc văn bản thành tiếng. Áp dụng cho tra từ, trung tâm dịch và lồng tiếng video.
+      engineEdge: Edge TTS (tích hợp, miễn phí)
+      engineMimo: MiMo TTS (Xiaomi)
+      apiKey: Khóa API
+      apiKeyDescription: Chỉ được gửi tới địa chỉ bên dưới. Lưu trên máy này, không nằm trong cài đặt đồng bộ.
+      baseUrl: URL gốc của API
+      model: Mô hình
+      voice: Giọng đọc
+      voiceDesigned: Mô hình thiết kế giọng tạo giọng riêng từ chỉ dẫn phong cách bên dưới.
+      stylePrompt: Chỉ dẫn phong cách
+      stylePromptDescription: Viết bằng ngôn ngữ tự nhiên, ví dụ đọc nhanh hơn một chút và tự nhiên. MiMo không có tham số số cho tốc độ, cao độ hay âm lượng nên ba thanh trượt ở trên chỉ áp dụng cho Edge TTS.
+      stylePromptPlaceholder: Đọc nhanh hơn một chút và tự nhiên
+      audioFormat: Định dạng âm thanh
+      audioFormatDescription: MP3 nhỏ hơn nhiều. WAV có thời lượng chính xác nên lồng tiếng canh thời điểm bắt đầu chuẩn hơn.
+      formatMp3: MP3 (nhỏ hơn)
+      formatWav: WAV (thời lượng chính xác)
+      test: Nghe thử
+      testSentence: Đây là bản thử MiMo TTS.
   videoSubtitles:
     title: Phụ đề video
     pageDescription: Dịch phụ đề khi đang xem, với nhà cung cấp, kiểu hiển thị và thiết lập yêu cầu riêng.

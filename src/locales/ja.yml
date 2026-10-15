@@ -1387,6 +1387,27 @@ options:
         title: 音量
         description: ボイス本来の大きさからどれだけ大きく、または小さく読むか。-100 から 100 パーセント。
       error: $1 から $2 までの整数を入力してください
+    mimo:
+      title: MiMo 音声合成
+      engine: 読み上げエンジン
+      engineDescription: テキストを読み上げるサービスを選びます。単語の読み上げ、翻訳ハブ、動画の吹き替えに適用されます。
+      engineEdge: Edge TTS（内蔵・無料）
+      engineMimo: MiMo TTS（Xiaomi）
+      apiKey: API キー
+      apiKeyDescription: 下のエンドポイントにのみ送信され、この端末に保存されます（同期設定の対象外）。
+      baseUrl: API ベース URL
+      model: モデル
+      voice: 音声
+      voiceDesigned: 音色デザインモデルは下のスタイル指示から音声を生成します。
+      stylePrompt: スタイル指示
+      stylePromptDescription: 自然言語で指定します（例：少し速めに、自然に）。MiMo には速度・ピッチ・音量の数値パラメータがないため、上の 3 つのスライダーは Edge TTS にのみ適用されます。
+      stylePromptPlaceholder: 少し速めに、自然に
+      audioFormat: 音声フォーマット
+      audioFormatDescription: MP3 ははるかに小さくなります。WAV は正確な長さを持つため、吹き替えの開始判定が正確になります。
+      formatMp3: MP3（小さい）
+      formatWav: WAV（正確な長さ）
+      test: 試聴
+      testSentence: これは MiMo 音声合成のテストです。
   videoSubtitles:
     title: 動画字幕
     pageDescription: 視聴しながら字幕を翻訳します。プロバイダー・スタイル・リクエスト設定は個別に指定できます。
