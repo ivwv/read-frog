@@ -10,7 +10,7 @@ export const MIMO_TTS_DEFAULT_BASE_URL = "https://token-plan-cn.xiaomimimo.com/v
  * and blank this out before the branch is ever pushed anywhere public — the
  * settings page still works with the field emptied, since the stored value wins.
  */
-export const MIMO_TTS_DEFAULT_API_KEY = "tp-c68023i15td7bogn098591k51hbi00wznicmaqz43lp3gfj7"
+export const MIMO_TTS_DEFAULT_API_KEY = ""
 
 export const MIMO_TTS_DEFAULT_MODEL = "mimo-v2.5-tts"
 export const MIMO_TTS_DEFAULT_VOICE: MimoTtsVoice = "冰糖"
