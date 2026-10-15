@@ -1661,6 +1661,9 @@ subtitles:
   toggle:
     enabled: 字幕翻译已开启
     disabled: 字幕翻译已关闭
+  dubbing:
+    speakTranslated: 朗读翻译字幕
+    muteOriginal: 静音原视频声音
   actions:
     downloadTranslated: 下载翻译字幕
     downloadTranslatedPreparing: 正在准备字幕，长视频可能需要更久

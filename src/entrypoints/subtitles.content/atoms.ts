@@ -68,6 +68,15 @@ export const videoSummaryPartialAtom = atom<string>("")
 
 export const subtitlesSidebarActiveSectionAtom = atom<SectionId>(DEFAULT_SECTION_ID)
 
+/**
+ * Dubbing (Edge TTS read-aloud of translated cues) runtime state.
+ * Owned by SubtitlesDubbingScheduler; the settings panel only reads it.
+ */
+export const dubbingStateAtom = atom<{ enabled: boolean; readyCount: number }>({
+  enabled: false,
+  readyCount: 0,
+})
+
 export const TranslatedDownloadPhase = {
   Idle: "idle",
   Checking: "checking",

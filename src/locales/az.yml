@@ -1649,6 +1649,9 @@ subtitles:
   toggle:
     enabled: Subtitr tərcüməsi aktivdir
     disabled: Subtitr tərcüməsi deaktivdir
+  dubbing:
+    speakTranslated: Tərcümə edilmiş subtitrləri səsləndir
+    muteOriginal: Orijinal video səsini söndür
   actions:
     downloadTranslated: Tərcümə edilmiş subtitrləri endir
     downloadTranslatedPreparing: Subtitrlər hazırlanır, uzun videolar bir qədər vaxt apara bilər

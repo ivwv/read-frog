@@ -19,6 +19,8 @@ interface SubtitlesUIContextValue {
   seekTo: (seconds: number) => void
   downloadSourceSubtitles: () => Promise<void>
   downloadTranslatedSubtitles: () => Promise<void>
+  setDubbingEnabled: (enabled: boolean) => Promise<void>
+  setDubbingMuteOriginal: (mute: boolean) => Promise<void>
   controlsConfig?: ControlsConfig
   embedded?: boolean
   openBelow?: boolean
@@ -56,6 +58,8 @@ export function SubtitlesProviders({
       seekTo: adapter.seekTo,
       downloadSourceSubtitles: adapter.downloadSourceSubtitles,
       downloadTranslatedSubtitles: adapter.downloadTranslatedSubtitles,
+      setDubbingEnabled: adapter.setDubbingEnabled,
+      setDubbingMuteOriginal: adapter.setDubbingMuteOriginal,
       controlsConfig: adapter.getControlsConfig(),
       embedded: adapter.embedded,
       openBelow,

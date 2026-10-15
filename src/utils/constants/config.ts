@@ -322,6 +322,10 @@ export const DEFAULT_CONFIG: Config = {
     },
     customPromptsConfig: DEFAULT_SUBTITLE_TRANSLATE_PROMPTS_CONFIG,
     position: DEFAULT_SUBTITLE_POSITION,
+    dubbing: {
+      enabled: false,
+      muteOriginal: false,
+    },
   },
   siteControl: {
     mode: "blacklist",

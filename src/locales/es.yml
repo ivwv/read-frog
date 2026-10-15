@@ -1656,6 +1656,9 @@ subtitles:
   toggle:
     enabled: Traducción de subtítulos activada
     disabled: Traducción de subtítulos desactivada
+  dubbing:
+    speakTranslated: Leer en voz alta los subtítulos traducidos
+    muteOriginal: Silenciar el audio original del video
   actions:
     downloadTranslated: Descargar subtítulos traducidos
     downloadTranslatedPreparing: Preparando subtítulos, los videos largos pueden tardar más

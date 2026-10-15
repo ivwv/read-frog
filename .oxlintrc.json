@@ -29,7 +29,8 @@
     ".cursor/**",
     "**/skills/**",
     "**/*.md/**",
-    "**/pnpm-lock.yaml"
+    "**/pnpm-lock.yaml",
+    "**/*.user.js"
   ],
   "rules": {
     "no-inner-declarations": "error",

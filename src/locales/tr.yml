@@ -1651,6 +1651,9 @@ subtitles:
   toggle:
     enabled: Altyazı çevirisi açık
     disabled: Altyazı çevirisi kapalı
+  dubbing:
+    speakTranslated: Çevrilmiş altyazıları sesli oku
+    muteOriginal: Orijinal video sesini kapat
   actions:
     downloadTranslated: Çevrilmiş altyazıları indir
     downloadTranslatedPreparing: Altyazılar hazırlanıyor, uzun videolar daha uzun sürebilir

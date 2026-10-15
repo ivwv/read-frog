@@ -52,6 +52,7 @@ import {
 } from "./atoms"
 import { renderSubtitlesTranslateButton } from "./renderer/render-translate-button"
 import { SegmentationPipeline } from "./segmentation-pipeline"
+import { SubtitlesDubbingScheduler } from "./subtitles-dubbing-scheduler"
 import { SubtitlesScheduler } from "./subtitles-scheduler"
 import { TranslatedSubtitlesDownloader } from "./translated-subtitles-downloader"
 import { TranslationCoordinator } from "./translation-coordinator"
@@ -90,11 +91,14 @@ export interface SubtitlesProvidersAdapter {
   requestAiSubtitles: () => Promise<void>
   downloadSourceSubtitles: () => Promise<void>
   downloadTranslatedSubtitles: () => Promise<void>
+  setDubbingEnabled: (enabled: boolean) => Promise<void>
+  setDubbingMuteOriginal: (mute: boolean) => Promise<void>
 }
 
 export class UniversalVideoAdapter implements SubtitlesProvidersAdapter {
   private config: PlatformConfig
   private subtitlesScheduler: SubtitlesScheduler | null = null
+  private dubbingScheduler: SubtitlesDubbingScheduler | null = null
   private fetchers: SubtitlesFetcherFactories
   private source: SubtitlesSource = SUBTITLES_SOURCE.NATIVE
   private fetcher: SubtitlesFetcher
@@ -331,6 +335,8 @@ export class UniversalVideoAdapter implements SubtitlesProvidersAdapter {
     this.subtitlesScheduler?.reset()
     this.subtitlesScheduler?.stop()
     this.subtitlesScheduler = null
+    this.dubbingScheduler?.destroy()
+    this.dubbingScheduler = null
   }
 
   private async initializeScheduler() {
@@ -347,6 +353,8 @@ export class UniversalVideoAdapter implements SubtitlesProvidersAdapter {
     this.subtitlesScheduler = new SubtitlesScheduler({ videoElement: video })
     this.subtitlesScheduler.start()
     this.subtitlesScheduler.hide()
+
+    this.dubbingScheduler = new SubtitlesDubbingScheduler({ videoElement: video })
   }
 
   private async getOrLoadSourceSubtitles(signal?: AbortSignal): Promise<SubtitlesFragment[]> {
@@ -635,7 +643,18 @@ export class UniversalVideoAdapter implements SubtitlesProvidersAdapter {
       this.subtitlesScheduler?.hide()
       this.showNativeSubtitles()
       this.translationCoordinator?.stop()
+      // Dubbing speaks the translated cues; with the session stopped it would
+      // sit on a muted video with nothing to say.
+      void this.dubbingScheduler?.setEnabled(false)
     }
+  }
+
+  setDubbingEnabled = async (enabled: boolean): Promise<void> => {
+    await this.dubbingScheduler?.setEnabled(enabled)
+  }
+
+  setDubbingMuteOriginal = async (mute: boolean): Promise<void> => {
+    await this.dubbingScheduler?.setMuteOriginal(mute)
   }
 
   requestAiSubtitles = async (): Promise<void> => {
@@ -681,6 +700,23 @@ export class UniversalVideoAdapter implements SubtitlesProvidersAdapter {
     }
     if (!succeeded && next !== SUBTITLES_SOURCE.NATIVE) {
       this.revertToNativeSource()
+      return
+    }
+    if (succeeded) {
+      void this.tryAutoStartDubbing()
+    }
+  }
+
+  /** When the persisted dubbing preference is on, follow a subtitles session start. */
+  private async tryAutoStartDubbing(): Promise<void> {
+    if (!this.dubbingScheduler || this.dubbingScheduler.isEnabled()) return
+    try {
+      const config = await getLocalConfig()
+      if (config?.videoSubtitles.dubbing.enabled) {
+        await this.dubbingScheduler.setEnabled(true)
+      }
+    } catch {
+      // Config read failed; the user can still start dubbing from the panel.
     }
   }
 

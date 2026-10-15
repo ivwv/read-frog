@@ -50,6 +50,12 @@ export const subtitlePositionSchema = z.object({
   anchor: z.enum(["top", "bottom"]),
 })
 
+export const subtitlesDubbingConfigSchema = z.object({
+  enabled: z.boolean(),
+  /** Mute the video's own audio while dubbing is on, so only the TTS is heard. */
+  muteOriginal: z.boolean(),
+})
+
 export const videoSubtitlesSchema = z.object({
   enabled: z.boolean(),
   autoStart: z.boolean(),
@@ -61,6 +67,8 @@ export const videoSubtitlesSchema = z.object({
   batchQueueConfig: batchQueueConfigSchema,
   customPromptsConfig: subtitleCustomPromptsConfigSchema,
   position: subtitlePositionSchema,
+  /** Read translated cues aloud with the built-in Edge TTS while the video plays. */
+  dubbing: subtitlesDubbingConfigSchema,
 })
 
 export type SubtitlesDisplayMode = z.infer<typeof subtitlesDisplayModeSchema>
@@ -71,3 +79,4 @@ export type SubtitleContainerStyle = z.infer<typeof subtitleContainerStyleSchema
 export type SubtitlesStyle = z.infer<typeof subtitlesStyleSchema>
 export type SubtitlePosition = z.infer<typeof subtitlePositionSchema>
 export type VideoSubtitles = z.infer<typeof videoSubtitlesSchema>
+export type SubtitlesDubbingConfig = z.infer<typeof subtitlesDubbingConfigSchema>

@@ -1651,6 +1651,9 @@ subtitles:
   toggle:
     enabled: 字幕翻訳をオンにしました
     disabled: 字幕翻訳をオフにしました
+  dubbing:
+    speakTranslated: 翻訳字幕を読み上げる
+    muteOriginal: 元の動画の音声をミュート
   actions:
     downloadTranslated: 翻訳字幕をダウンロード
     downloadTranslatedPreparing: 字幕を準備中。長い動画は時間がかかる場合があります

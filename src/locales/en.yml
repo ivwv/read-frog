@@ -1798,6 +1798,9 @@ subtitles:
   toggle:
     enabled: Subtitle translation on
     disabled: Subtitle translation off
+  dubbing:
+    speakTranslated: Read translated subtitles aloud
+    muteOriginal: Mute original video audio
   actions:
     downloadTranslated: Download translated subtitles
     downloadTranslatedPreparing: Preparing subtitles, longer videos may take a while

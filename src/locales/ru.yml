@@ -1651,6 +1651,9 @@ subtitles:
   toggle:
     enabled: Перевод субтитров включён
     disabled: Перевод субтитров выключен
+  dubbing:
+    speakTranslated: Озвучивать переведённые субтитры
+    muteOriginal: Заглушить звук исходного видео
   actions:
     downloadTranslated: Скачать переведённые субтитры
     downloadTranslatedPreparing: Подготовка субтитров, длинные видео могут занять больше времени
