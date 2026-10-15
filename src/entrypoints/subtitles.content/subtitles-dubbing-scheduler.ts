@@ -9,18 +9,31 @@ import { dubbingStateAtom, subtitlesStore, translatedTrackAtom } from "./atoms"
 
 /** How many cues ahead of the playhead to keep synthesized audio ready. */
 const PREFETCH_CUES = 4
-/** Hard ceiling for time-compression; browsers reject playbackRate above ~4. */
+/** Time-compression ceiling; browsers refuse playbackRate above roughly this. */
 const MAX_PLAYBACK_RATE = 4
-/** A cue shorter than this compresses to garbage; clamp instead. */
+/** Speech is never slowed below natural speed: a drawl is worse than a small overrun. */
+const MIN_BASE_RATE = 1
+/** Floor for a cue window in the rate math, guarding against divide-by-zero. */
 const MIN_CUE_DURATION_S = 0.2
-/** Skip cues whose window already ended this far in the past (ms after seek). */
-const STALE_CUE_TOLERANCE_MS = 500
+/** Rewriting playbackRate every tick is audible churn; ignore deltas below this. */
+const RATE_UPDATE_TOLERANCE = 0.03
+/** A seek landing this close to a cue's start plays it from the top. */
+const JOIN_TOLERANCE_MS = 150
+/** Past a cue's end a sentence may still finish (never cut mid-word) for this long. */
+const TAIL_GRACE_MS = 2_000
+/** Cross-fade given to an overrunning cue before the next one takes over. */
+const FADE_OUT_MS = 120
 /** Re-read the config at most this often; the options page edits it live. */
 const CONFIG_CACHE_MS = 30_000
 
 interface SynthesizedCue {
   audioBase64: string
   contentType: string
+  /**
+   * Seconds of speech, learned from the element once its metadata is known.
+   * Null until measured — the rate loop simply waits for it rather than guessing.
+   */
+  duration: number | null
 }
 
 export interface SubtitlesDubbingSchedulerOptions {
@@ -38,14 +51,23 @@ function toSignedValue(value: number, unit: "%" | "Hz"): string {
 /**
  * Reads translated cues aloud with Edge TTS, synchronized to the video clock.
  *
- * - Subscribes to `translatedTrackAtom` (the scheduler's translated cues) and
- *   prefetches audio for the next PREFETCH_CUES cues, so a seek only waits on
- *   synthesis for whatever is not yet cached.
- * - On each cue entry plays its audio, time-compressed into the cue window when
- *   the audio is longer (never stretched below 1x — slow speech sounds worse
- *   than an overrun), and multiplied by the video's own playbackRate.
- * - Muting is applied to `videoElement.muted` only while the feature is on,
- *   restoring whatever the user had when it turns off.
+ * The clock work is a control loop rather than a one-shot calculation, because a
+ * spoken translation and its cue window almost never have the same length: a
+ * sentence whose audio is longer than its window has to be sped up (and one that
+ * is shorter must not be slowed down), and the ratio drifts as the video plays,
+ * is scrubbed, or changes speed. On every tick the loop re-derives the rate from
+ * *what is left to say* against *what is left of the window*, so it self-corrects
+ * instead of accumulating error:
+ *
+ * - `baseRate = remainingAudio / remainingWindow`, clamped to [1, MAX]. The
+ *   window is measured in video seconds, so the result is multiplied by the
+ *   video's own playbackRate to land back in wall-clock seconds per second.
+ * - A seek into the middle of a cue joins the audio at the matching fraction
+ *   instead of replaying the sentence from its start, which would overflow.
+ * - A cue that still overruns (rate capped) is faded out under the next one
+ *   rather than cut mid-word, and a sentence is never replayed once finished.
+ * - Audio for the next PREFETCH_CUES cues is synthesized ahead of the playhead,
+ *   so a seek waits only on whatever is not yet cached.
  */
 export class SubtitlesDubbingScheduler {
   private videoElement: HTMLVideoElement
@@ -62,6 +84,8 @@ export class SubtitlesDubbingScheduler {
   private audioCache = new Map<string, SynthesizedCue>()
   private inFlight = new Map<string, Promise<void>>()
   private failedKeys = new Set<string>()
+  /** Cues already spoken to completion; stops a short sentence from looping. */
+  private completedCueKeys = new Set<string>()
   private runId = 0
 
   constructor(options: SubtitlesDubbingSchedulerOptions) {
@@ -102,11 +126,12 @@ export class SubtitlesDubbingScheduler {
     this.applyMuteState()
   }
 
-  /** Drop cached audio and stop playback; used when the translated track changes. */
+  /** Drop cached audio and stop playback; used when the translated track is replaced. */
   reset(): void {
     this.audioCache.clear()
     this.inFlight.clear()
     this.failedKeys.clear()
+    this.completedCueKeys.clear()
     this.stopAudio()
     this.currentCueKey = null
     this.publishState()
@@ -137,8 +162,7 @@ export class SubtitlesDubbingScheduler {
 
     if (!this.unsubTranslatedTrack) {
       this.unsubTranslatedTrack = subtitlesStore.sub(translatedTrackAtom, () => {
-        // A recut or a source switch invalidates every cached cue.
-        this.reset()
+        this.handleTrackChange()
       })
     }
 
@@ -151,11 +175,34 @@ export class SubtitlesDubbingScheduler {
     this.runId++
     this.stopAudio()
     this.currentCueKey = null
+    this.completedCueKeys.clear()
     this.detachVideoListeners()
     this.unsubTranslatedTrack?.()
     this.unsubTranslatedTrack = null
     this.restoreUserMutedState()
     this.publishState()
+  }
+
+  /**
+   * Translation batches land continuously, so the track atom is re-set often.
+   * Drop audio whose cue disappeared (a recut, or a source switch) but keep the
+   * sentence that is playing — reloading it would restart speech mid-word.
+   */
+  private handleTrackChange(): void {
+    const track = subtitlesStore.get(translatedTrackAtom)
+    const liveKeys = new Set(track.map(cueKey))
+
+    for (const key of [...this.audioCache.keys()]) {
+      if (!liveKeys.has(key)) this.audioCache.delete(key)
+    }
+    for (const key of [...this.completedCueKeys]) {
+      if (!liveKeys.has(key)) this.completedCueKeys.delete(key)
+    }
+
+    if (this.currentCueKey !== null && !liveKeys.has(this.currentCueKey)) {
+      this.stopAudio(FADE_OUT_MS)
+      this.currentCueKey = null
+    }
   }
 
   private rememberUserMutedState(): void {
@@ -199,6 +246,8 @@ export class SubtitlesDubbingScheduler {
   private handleSeek = () => {
     this.stopAudio()
     this.currentCueKey = null
+    // Seeking is an explicit jump: sentences may be listened to again.
+    this.completedCueKeys.clear()
     this.tick()
   }
 
@@ -213,6 +262,7 @@ export class SubtitlesDubbingScheduler {
     const cue = this.findCueByKey(this.currentCueKey)
     const timeMs = this.videoElement.currentTime * 1000
     if (cue && timeMs >= cue.start && timeMs <= cue.end) {
+      this.applyAdaptiveRate(cue)
       void audio.play().catch(() => {})
     }
   }
@@ -222,14 +272,12 @@ export class SubtitlesDubbingScheduler {
     if (!audio || this.currentCueKey === null) return
     const cue = this.findCueByKey(this.currentCueKey)
     if (cue) {
-      this.applyPlaybackRate(audio, cue)
+      this.applyAdaptiveRate(cue)
     }
   }
 
   private findCueByKey(key: string): SubtitlesFragment | null {
-    return (
-      subtitlesStore.get(translatedTrackAtom).find((f) => cueKey(f) === key) ?? null
-    )
+    return subtitlesStore.get(translatedTrackAtom).find((f) => cueKey(f) === key) ?? null
   }
 
   private tick = (): void => {
@@ -242,11 +290,18 @@ export class SubtitlesDubbingScheduler {
 
     if (activeCue) {
       this.playCue(activeCue)
-    } else if (this.currentAudio && !this.currentAudio.paused) {
-      // Tolerance band so a gap between cues does not clip the tail of speech.
-      const cue = this.currentCueKey ? this.findCueByKey(this.currentCueKey) : null
-      if (!cue || timeMs > cue.end + STALE_CUE_TOLERANCE_MS) {
-        this.stopAudio()
+      this.applyAdaptiveRate(activeCue)
+    } else {
+      // Between cues. A sentence that is still speaking is allowed to finish —
+      // cutting it mid-word is worse than a short overrun — but the loop keeps
+      // compressing it, and a runaway one is eventually dropped.
+      const playingCue = this.currentCueKey ? this.findCueByKey(this.currentCueKey) : null
+      if (playingCue) {
+        if (timeMs > playingCue.end + TAIL_GRACE_MS) {
+          this.stopAudio(FADE_OUT_MS)
+        } else {
+          this.applyAdaptiveRate(playingCue)
+        }
       }
     }
 
@@ -259,10 +314,11 @@ export class SubtitlesDubbingScheduler {
 
   private playCue(cue: SubtitlesFragment): void {
     const key = cueKey(cue)
-    if (key === this.currentCueKey && this.currentAudio && !this.currentAudio.ended) {
-      // Already playing this cue (or paused in it); rate changes handled elsewhere.
-      return
-    }
+
+    // Already speaking this cue, or it was spoken to the end: nothing to start.
+    // (Without the completed-set a short sentence in a long cue would loop.)
+    if (key === this.currentCueKey && this.currentAudio) return
+    if (this.completedCueKeys.has(key)) return
 
     const cached = this.audioCache.get(key)
     if (!cached) {
@@ -274,43 +330,190 @@ export class SubtitlesDubbingScheduler {
       return
     }
 
-    this.stopAudio()
+    this.startCue(cue, cached)
+  }
+
+  private startCue(cue: SubtitlesFragment, entry: SynthesizedCue): void {
+    const key = cueKey(cue)
+    // Cross-fade rather than cut, in case the previous sentence overran.
+    this.stopAudio(FADE_OUT_MS)
     this.currentCueKey = key
 
-    const audio = new Audio(`data:${cached.contentType};base64,${cached.audioBase64}`)
+    const audio = new Audio(`data:${entry.contentType};base64,${entry.audioBase64}`)
+    audio.volume = 1
     this.currentAudio = audio
 
-    audio.addEventListener("loadedmetadata", () => {
-      if (this.currentAudio === audio && !Number.isNaN(audio.duration)) {
-        this.applyPlaybackRate(audio, cue)
-      }
-    })
-    audio.addEventListener("ended", () => {
-      if (this.currentAudio === audio) {
-        this.currentAudio = null
-      }
-    })
+    this.attachCueAudioListeners(audio, entry, cue)
 
+    // Start immediately to keep latency low; the settle pass corrects the rate
+    // (and the join position) as soon as the duration is known.
     if (!this.videoElement.paused) {
-      this.applyPlaybackRate(audio, cue)
       void audio.play().catch(() => {})
     }
   }
 
   /**
-   * Time-compress the audio into the cue window. Only ever speeds up (an
-   * overrun into the next cue beats slow-motion speech), and stacks with the
-   * video's own playbackRate.
+   * Brings a cue's element up to date: learns its true duration, places the
+   * playhead (mid-cue join, or back to the start after a probe), then hands the
+   * rate loop its first target.
    */
-  private applyPlaybackRate(audio: HTMLAudioElement, cue: SubtitlesFragment): void {
-    const cueDurationS = Math.max((cue.end - cue.start) / 1000, MIN_CUE_DURATION_S)
-    const audioDuration = audio.duration
-    if (!audioDuration || Number.isNaN(audioDuration)) return
+  private attachCueAudioListeners(
+    audio: HTMLAudioElement,
+    entry: SynthesizedCue,
+    cue: SubtitlesFragment,
+  ): void {
+    const key = cueKey(cue)
+    const joinFraction = this.computeJoinFraction(cue)
+    let positionApplied = false
+    let probed = false
+    // Set while a probe parks the element at its end, so the resulting `ended`
+    // event is not mistaken for the sentence having been spoken.
+    let probing = false
 
-    let baseRate = audioDuration / cueDurationS
-    if (baseRate < 1) baseRate = 1
+    const settle = () => {
+      if (this.currentAudio !== audio) return
+      const duration = this.measureDuration(audio, entry)
 
-    audio.playbackRate = Math.min(baseRate * this.videoElement.playbackRate, MAX_PLAYBACK_RATE)
+      if (duration === null) {
+        // An MP3 data: URL can report Infinity until the browser has scanned to
+        // the end. Seeking far past the end forces the real value out, and
+        // `durationchange` calls us back. Guarded by `probed`, and the playhead
+        // is repositioned below, so this can never skip real audio.
+        if (!probed) {
+          probed = true
+          probing = true
+          try {
+            audio.currentTime = 1e6
+          } catch {
+            // Non-seekable source; the rate loop stays at natural speed.
+          }
+        }
+        return
+      }
+
+      probing = false
+
+      if (entry.duration === null) entry.duration = duration
+
+      if (!positionApplied) {
+        positionApplied = true
+        // After a probe the element sits at the end, so the start position has
+        // to be written explicitly even when the cue begins at its own start.
+        if (probed || joinFraction > 0) {
+          this.seekIntoAudio(audio, entry, joinFraction)
+        }
+      }
+
+      this.applyAdaptiveRate(cue)
+
+      // A late-arriving duration can mean playback was never kicked off.
+      if (!this.videoElement.paused && audio.paused && !audio.ended) {
+        void audio.play().catch(() => {})
+      }
+    }
+
+    audio.addEventListener("loadedmetadata", settle)
+    audio.addEventListener("durationchange", settle)
+    audio.addEventListener("ended", () => {
+      // An `ended` produced by the duration probe is not the sentence finishing.
+      if (probing) {
+        probing = false
+        settle()
+        return
+      }
+      // Playback end is the one duration measurement that cannot lie.
+      if (audio.currentTime > 0) entry.duration = audio.currentTime
+      this.completedCueKeys.add(key)
+      if (this.currentAudio === audio) this.currentAudio = null
+    })
+
+    settle()
+  }
+
+  /**
+   * How far into a cue the playhead already is, as a fraction. Near the cue's
+   * start this is 0 (play the sentence from the top); after a seek into the
+   * middle it is where the audio should join so the remaining speech still fits
+   * the remaining window.
+   */
+  private computeJoinFraction(cue: SubtitlesFragment): number {
+    const elapsedMs = this.videoElement.currentTime * 1000 - cue.start
+    if (elapsedMs <= JOIN_TOLERANCE_MS) return 0
+    const cueDurationMs = Math.max(cue.end - cue.start, 1)
+    return Math.min(elapsedMs / cueDurationMs, 0.9)
+  }
+
+  /**
+   * Seconds of speech for a cue. The element's own duration is authoritative
+   * once known; before that we fall back to whatever the entry recorded (which
+   * startCue fills in as soon as metadata or playback end reveals it).
+   */
+  private measureDuration(
+    audio: HTMLAudioElement | null,
+    entry: SynthesizedCue | undefined,
+  ): number | null {
+    if (audio && Number.isFinite(audio.duration) && audio.duration > 0) {
+      return audio.duration
+    }
+    if (entry && entry.duration !== null && entry.duration > 0) return entry.duration
+    return null
+  }
+
+  /**
+   * Places the element's playhead. The target is written even when it is 0:
+   * after a duration probe the element sits at its end, so "back to the start"
+   * has to be an explicit assignment or the remaining audio reads as zero.
+   */
+  private seekIntoAudio(
+    audio: HTMLAudioElement,
+    entry: SynthesizedCue,
+    fraction: number,
+  ): void {
+    const duration = this.measureDuration(audio, entry)
+    if (duration === null) return
+    const target = Math.min(Math.max(fraction * duration, 0), Math.max(duration - 0.5, 0))
+    audio.currentTime = target
+  }
+
+  /**
+   * The synchronization core: aim the remaining speech at the remaining window.
+   * Called on every tick, so it converges instead of drifting, and it never
+   * slows speech below natural speed.
+   */
+  private applyAdaptiveRate(cue: SubtitlesFragment): void {
+    const audio = this.currentAudio
+    if (!audio || audio.ended) return
+
+    const duration = this.measureDuration(audio, this.audioCache.get(cueKey(cue)))
+    if (duration === null) {
+      // Duration not measured yet; the metadata handler primes the real rate
+      // moments later rather than guessing here.
+      return
+    }
+
+    const videoRate = this.videoElement.playbackRate > 0 ? this.videoElement.playbackRate : 1
+    const timeMs = this.videoElement.currentTime * 1000
+    const remainingWindowS = (cue.end - timeMs) / 1000
+
+    let baseRate: number
+    if (remainingWindowS <= 0) {
+      // The window is already gone: sprint so the sentence lands as soon as it can.
+      baseRate = MAX_PLAYBACK_RATE
+    } else {
+      const remainingAudioS = Math.max(duration - audio.currentTime, 0)
+      baseRate = remainingAudioS / Math.max(remainingWindowS, MIN_CUE_DURATION_S)
+    }
+
+    if (!Number.isFinite(baseRate) || baseRate < MIN_BASE_RATE) {
+      baseRate = MIN_BASE_RATE
+    }
+
+    // baseRate is in video seconds; multiplying by the video rate converts it to
+    // wall-clock seconds, and the cap keeps the browser from rejecting the value.
+    const finalRate = Math.min(baseRate * videoRate, MAX_PLAYBACK_RATE)
+    if (Math.abs(audio.playbackRate - finalRate) > RATE_UPDATE_TOLERANCE) {
+      audio.playbackRate = finalRate
+    }
   }
 
   private prefetchAhead(track: SubtitlesFragment[], activeCue: SubtitlesFragment | null): void {
@@ -359,7 +562,7 @@ export class SubtitlesDubbingScheduler {
       if (audioBase64 === null) {
         this.failedKeys.add(key)
       } else {
-        this.audioCache.set(key, audioBase64)
+        this.audioCache.set(key, { ...audioBase64, duration: null })
         // Synthesis may have completed a cue the playhead is already inside
         // (e.g. dubbing was just enabled); re-evaluate what should be playing.
         if (this.enabled && key === this.currentCueKey) {
@@ -402,12 +605,35 @@ export class SubtitlesDubbingScheduler {
     return { audioBase64: response.audioBase64, contentType: response.contentType }
   }
 
-  private stopAudio(): void {
-    if (this.currentAudio) {
-      this.currentAudio.pause()
-      this.currentAudio.src = ""
-      this.currentAudio = null
+  /**
+   * Stops the current element, optionally over a short fade so a handover to the
+   * next cue is heard as a dip rather than a chopped word.
+   */
+  private stopAudio(fadeOutMs = 0): void {
+    const audio = this.currentAudio
+    if (!audio) return
+    this.currentAudio = null
+
+    if (fadeOutMs <= 0 || audio.paused) {
+      this.releaseAudio(audio)
+      return
     }
+
+    const steps = 4
+    let step = 0
+    const timer = setInterval(() => {
+      step++
+      audio.volume = Math.max(0, 1 - step / steps)
+      if (step >= steps) {
+        clearInterval(timer)
+        this.releaseAudio(audio)
+      }
+    }, Math.max(fadeOutMs / steps, 16))
+  }
+
+  private releaseAudio(audio: HTMLAudioElement): void {
+    audio.pause()
+    audio.src = ""
   }
 
   private publishState(): void {
