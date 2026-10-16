@@ -35,8 +35,8 @@ const MAX_PLAYBACK_RATE = 4
 const MAX_CACHE_ENTRIES = 64
 /**
  * Cache ceiling by resident bytes, for engines whose clips are far larger per
- * cue (MiMo WAV is ~48 KB/s of PCM). `audioBase64` is a pure-ASCII string, so
- * its `.length` is the memory it holds in a one-byte V8 string.
+ * cue (MiMo WAV is ~48 KB/s of PCM). Measured on the decoded blob, which is the
+ * memory a cached clip actually holds.
  */
 const MAX_CACHE_BYTES = 12 * 1024 * 1024
 /**
@@ -66,8 +66,21 @@ const FADE_OUT_MS = 120
 const CONFIG_CACHE_MS = 30_000
 
 interface SynthesizedCue {
-  audioBase64: string
-  contentType: string
+  /**
+   * Object URL of the decoded clip, and the only handle playback needs.
+   *
+   * The base64 the engine returns is decoded once, here, rather than kept and
+   * re-wrapped in a `data:` URL per play: that held two copies of every clip (the
+   * cached string plus the URL built from it) and made the media pipeline re-parse
+   * base64 on each play. A blob is the bytes themselves, and Chrome may page it
+   * out of the JS heap.
+   *
+   * Owned by the cache: revoked when the entry is dropped, never on element
+   * teardown, because a cached clip can be played again after a seek.
+   */
+  objectUrl: string
+  /** Decoded size in bytes, for the cache's budget. */
+  byteLength: number
   /**
    * Seconds of speech, learned from the element once its metadata is known.
    * Null until measured — the rate loop simply waits for it rather than guessing.
@@ -82,6 +95,31 @@ interface SynthesizedCue {
   /** Cue window, kept so cache eviction and the buffer readout can use the playhead. */
   start: number
   end: number
+}
+
+/**
+ * Decodes a synthesized clip into a blob URL.
+ *
+ * Throws on a payload that decodes to nothing, which routes it through the same
+ * failure path as an engine error — an empty clip must not be cached as a hit, or
+ * that cue would stay silent for good.
+ */
+function decodeClipToObjectUrl(
+  audioBase64: string,
+  contentType: string,
+): { objectUrl: string; byteLength: number } {
+  const binary = atob(audioBase64)
+  const bytes = new Uint8Array(binary.length)
+  for (let index = 0; index < binary.length; index++) {
+    bytes[index] = binary.charCodeAt(index)
+  }
+  if (bytes.byteLength === 0) {
+    throw new Error("Synthesized audio decoded to zero bytes")
+  }
+  return {
+    objectUrl: URL.createObjectURL(new Blob([bytes], { type: contentType })),
+    byteLength: bytes.byteLength,
+  }
 }
 
 /** Failure bookkeeping with an expiry, so transient errors can be retried. */
@@ -167,6 +205,14 @@ export class SubtitlesDubbingScheduler {
   private unsubAdPlaying: (() => void) | null = null
   private currentAudio: HTMLAudioElement | null = null
   private currentCueKey: string | null = null
+  /**
+   * Tears down the element that is currently playing, listeners included.
+   *
+   * Every release goes through this rather than calling `releaseAudio` directly,
+   * so there is one teardown path: a second one that skipped the listeners is
+   * what let a released element's late `error` be read as its clip failing.
+   */
+  private disposeCurrentAudio: (() => void) | null = null
   /** Synthesized audio keyed by fingerprint+cue identity; trimmed by budget and position. */
   private audioCache = new Map<string, SynthesizedCue>()
   /** The synthesis inputs the cache was built with; a change invalidates it. */
@@ -267,7 +313,7 @@ export class SubtitlesDubbingScheduler {
 
   /** Drop cached audio and stop playback; used when the translated track is replaced. */
   reset(): void {
-    this.audioCache.clear()
+    this.clearAudioCache()
     this.inFlight.clear()
     this.failedKeys.clear()
     this.completedCueKeys.clear()
@@ -395,7 +441,7 @@ export class SubtitlesDubbingScheduler {
     // Cache keys carry the synthesis fingerprint as a prefix, so the identity is
     // compared through the entry rather than the key — see `SynthesizedCue`.
     for (const [key, entry] of [...this.audioCache]) {
-      if (!liveKeys.has(entry.cueIdentity)) this.audioCache.delete(key)
+      if (!liveKeys.has(entry.cueIdentity)) this.dropCue(key)
     }
     for (const key of [...this.completedCueKeys]) {
       if (!liveKeys.has(key)) this.completedCueKeys.delete(key)
@@ -576,7 +622,7 @@ export class SubtitlesDubbingScheduler {
     }
 
     const cached = this.audioCache.get(this.audioKey(key))
-    if (!cached || cached.audioBase64.length === 0) {
+    if (!cached || cached.byteLength === 0) {
       // Audio not ready yet. Prefetch only covers cues AFTER this one, so the
       // active cue has to synthesize here; when it lands, synthesizeCue
       // re-ticks and this method runs again with the cache populated.
@@ -594,7 +640,9 @@ export class SubtitlesDubbingScheduler {
     this.stopAudio(FADE_OUT_MS)
     this.currentCueKey = key
 
-    const audio = new Audio(`data:${entry.contentType};base64,${entry.audioBase64}`)
+    // Plays straight from the blob URL: no string is built per play, and the
+    // media pipeline reads the bytes rather than decoding base64 first.
+    const audio = new Audio(entry.objectUrl)
     audio.volume = this.dubbingVolume
     this.currentAudio = audio
 
@@ -629,9 +677,16 @@ export class SubtitlesDubbingScheduler {
     // Set while a probe parks the element at its end, so the resulting `ended`
     // event is not mistaken for the sentence having been spoken.
     let probing = false
+    /**
+     * Set once this element is torn down. A browser can still report an `error`
+     * for the load it was doing when it was released, and reading that as "the
+     * clip failed to decode" would drop good audio — and, because the handler
+     * also tears the element down, re-enter itself.
+     */
+    let disposed = false
 
     const settle = () => {
-      if (this.currentAudio !== audio) return
+      if (disposed || this.currentAudio !== audio) return
       const duration = this.measureDuration(audio, entry)
 
       if (duration === null) {
@@ -675,21 +730,38 @@ export class SubtitlesDubbingScheduler {
       }
     }
 
-    audio.addEventListener("loadedmetadata", settle)
-    audio.addEventListener("durationchange", settle)
-    audio.addEventListener("error", () => {
-      // A clip that cannot decode (bad engine payload, truncated base64) must
-      // not leave a silent element parked as "speaking": release it and mark
-      // the cue failed so the retry window — not TAIL_GRACE — decides what
-      // happens next.
+    /** Tears the element down once, detaching the listeners that drove it. */
+    const dispose = () => {
+      if (disposed) return
+      disposed = true
+      if (this.disposeCurrentAudio === dispose) this.disposeCurrentAudio = null
+      audio.removeEventListener("loadedmetadata", settle)
+      audio.removeEventListener("durationchange", settle)
+      audio.removeEventListener("error", handleError)
+      audio.removeEventListener("ended", handleEnded)
+      this.releaseAudio(audio)
+    }
+
+    this.disposeCurrentAudio = dispose
+
+    const handleError = () => {
+      if (disposed) return
+      dispose()
+      // Drop the undecodable bytes. Leaving them cached meant the next tick
+      // found a "cached" cue, built another element from the same payload and
+      // failed again — one element and one fresh copy of the whole data URL per
+      // timeupdate, which is what made a single bad clip grow without bound.
+      this.dropCue(this.audioKey(key))
       this.failedKeys.set(key, { failedAt: Date.now() })
       if (this.currentAudio === audio) {
         this.currentAudio = null
         this.currentCueKey = null
       }
-      this.releaseAudio(audio)
-    })
-    audio.addEventListener("ended", () => {
+      this.publishState()
+    }
+
+    const handleEnded = () => {
+      if (disposed) return
       // An `ended` produced by the duration probe is not the sentence finishing.
       if (probing) {
         probing = false
@@ -700,7 +772,15 @@ export class SubtitlesDubbingScheduler {
       if (audio.currentTime > 0) entry.duration = audio.currentTime
       this.completedCueKeys.add(key)
       if (this.currentAudio === audio) this.currentAudio = null
-    })
+      // Nothing reads the element again, so hand its decoded buffer and its copy
+      // of the data URL back now rather than leaving them for the collector.
+      dispose()
+    }
+
+    audio.addEventListener("loadedmetadata", settle)
+    audio.addEventListener("durationchange", settle)
+    audio.addEventListener("error", handleError)
+    audio.addEventListener("ended", handleEnded)
 
     settle()
   }
@@ -895,8 +975,11 @@ export class SubtitlesDubbingScheduler {
       const audio = await this.synthesize(fragment.translation!)
       if (runId !== this.runId) return
       this.failingSince = null
+      // Decoded once here, so every later play reads bytes instead of re-parsing
+      // base64. A payload that decodes to nothing throws into the catch below.
+      const clip = decodeClipToObjectUrl(audio.audioBase64, audio.contentType)
       this.audioCache.set(this.audioKey(key), {
-        ...audio,
+        ...clip,
         duration: null,
         cueIdentity: key,
         start: fragment.start,
@@ -940,13 +1023,13 @@ export class SubtitlesDubbingScheduler {
    */
   private hasUsableCacheFor(key: string): boolean {
     const entry = this.audioCache.get(this.audioKey(key))
-    return !!entry && entry.audioBase64.length > 0
+    return !!entry && entry.byteLength > 0
   }
 
   private cacheBytes(): number {
     let sum = 0
     for (const entry of this.audioCache.values()) {
-      sum += entry.audioBase64.length
+      sum += entry.byteLength
     }
     return sum
   }
@@ -969,7 +1052,7 @@ export class SubtitlesDubbingScheduler {
     if (Number.isFinite(nowMs)) {
       for (const [key, entry] of this.audioCache) {
         if (key !== this.audioKey(this.currentCueKey ?? "") && entry.end < nowMs - CACHE_KEEP_BEHIND_MS) {
-          this.audioCache.delete(key)
+          this.dropCue(key)
         }
       }
     }
@@ -986,8 +1069,30 @@ export class SubtitlesDubbingScheduler {
       if (this.audioCache.size <= MAX_CACHE_ENTRIES && this.cacheBytes() <= MAX_CACHE_BYTES) {
         break
       }
-      this.audioCache.delete(key)
+      this.dropCue(key)
     }
+  }
+
+  /**
+   * Cache-key helpers.
+   *
+   * Every removal goes through these two, because a dropped entry must revoke its
+   * object URL — the blob stays alive for as long as the URL exists, so a plain
+   * `delete` would leak the whole clip. Adding a third place that removes entries
+   * without revoking reintroduces that leak.
+   */
+  private dropCue(audioKey: string): void {
+    const entry = this.audioCache.get(audioKey)
+    if (!entry) return
+    URL.revokeObjectURL(entry.objectUrl)
+    this.audioCache.delete(audioKey)
+  }
+
+  private clearAudioCache(): void {
+    for (const entry of this.audioCache.values()) {
+      URL.revokeObjectURL(entry.objectUrl)
+    }
+    this.audioCache.clear()
   }
 
   private async synthesize(text: string): Promise<{ audioBase64: string; contentType: string }> {
@@ -1009,7 +1114,7 @@ export class SubtitlesDubbingScheduler {
     const fingerprint = synthesisFingerprint(ttsConfig, settings)
     if (fingerprint !== this.synthesisFingerprintCache) {
       this.synthesisFingerprintCache = fingerprint
-      this.audioCache.clear()
+      this.clearAudioCache()
       this.failedKeys.clear()
     }
 
@@ -1037,8 +1142,12 @@ export class SubtitlesDubbingScheduler {
     if (!audio) return
     this.currentAudio = null
 
+    // Captured now: a fade outlives this call, and by the time it finishes a new
+    // element has already claimed the field.
+    const dispose = this.disposeCurrentAudio ?? (() => this.releaseAudio(audio))
+
     if (fadeOutMs <= 0 || audio.paused) {
-      this.releaseAudio(audio)
+      dispose()
       return
     }
 
@@ -1051,14 +1160,24 @@ export class SubtitlesDubbingScheduler {
       audio.volume = this.dubbingVolume * Math.max(0, 1 - step / steps)
       if (step >= steps) {
         clearInterval(timer)
-        this.releaseAudio(audio)
+        dispose()
       }
     }, Math.max(fadeOutMs / steps, 16))
   }
 
+  /**
+   * Hands an element's buffers back.
+   *
+   * `removeAttribute("src")` + `load()` rather than `src = ""`: the empty string
+   * is a URL — it resolves against the document — so assigning it starts a load
+   * of the page itself, which fails and raises `error` on the element. Clearing
+   * the attribute instead leaves the element with no candidate at all, so no
+   * error is reported for a clip that was simply finished with.
+   */
   private releaseAudio(audio: HTMLAudioElement): void {
     audio.pause()
-    audio.src = ""
+    audio.removeAttribute("src")
+    audio.load()
   }
 
   /**

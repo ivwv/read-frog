@@ -37,6 +37,8 @@ function createAudioStub(options: { duration?: number; probeDuration?: number } 
     src: "",
     play: vi.fn<() => Promise<void>>(() => Promise.resolve()),
     pause: vi.fn<() => void>(),
+    load: vi.fn<() => void>(),
+    removeAttribute: vi.fn<(name: string) => void>(),
     addEventListener: vi.fn<(type: string, listener: EventListener) => void>(
       (type: string, listener: EventListener) => {
         listeners.set(type, listener)
@@ -128,13 +130,49 @@ function createScheduler(video: HTMLVideoElement): SubtitlesDubbingScheduler {
 }
 
 function installAudioGlobal() {
-  function AudioStub() {
+  function AudioStub(url?: string) {
     const options = audioStubQueue.shift() ?? {}
     const stub = createAudioStub(options)
+    // A real element exposes the source it was constructed with.
+    if (typeof url === "string") stub.src = url
     audioInstances.push(stub)
     return stub
   }
   vi.stubGlobal("Audio", AudioStub)
+}
+
+const createObjectURLDescriptor = Object.getOwnPropertyDescriptor(URL, "createObjectURL")
+const revokeObjectURLDescriptor = Object.getOwnPropertyDescriptor(URL, "revokeObjectURL")
+
+/** Every blob URL the scheduler created, and every one it handed back. */
+let createdObjectUrls: string[] = []
+let revokedObjectUrls: string[] = []
+
+function installObjectUrlGlobals() {
+  const create = vi.fn<(...args: any[]) => any>(() => {
+    const url = `blob:dubbing-test-${createdObjectUrls.length}`
+    createdObjectUrls.push(url)
+    return url
+  })
+  const revoke = vi.fn<(...args: any[]) => any>((url: string) => {
+    revokedObjectUrls.push(url)
+  })
+
+  Object.defineProperty(URL, "createObjectURL", { configurable: true, value: create })
+  Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: revoke })
+}
+
+function restoreObjectUrlGlobals() {
+  if (createObjectURLDescriptor) {
+    Object.defineProperty(URL, "createObjectURL", createObjectURLDescriptor)
+  } else {
+    delete (URL as { createObjectURL?: unknown }).createObjectURL
+  }
+  if (revokeObjectURLDescriptor) {
+    Object.defineProperty(URL, "revokeObjectURL", revokeObjectURLDescriptor)
+  } else {
+    delete (URL as { revokeObjectURL?: unknown }).revokeObjectURL
+  }
 }
 
 // @webext-core/messaging calls sendMessage(type, data) — data is index 1.
@@ -155,7 +193,10 @@ describe("subtitles dubbing scheduler", () => {
     audioInstances = []
     audioStubQueue = []
     liveSchedulers = []
+    createdObjectUrls = []
+    revokedObjectUrls = []
     installAudioGlobal()
+    installObjectUrlGlobals()
     mockSynthesizeSuccess()
     mockConfig()
     // The engine defaults to Edge; the concurrency test overrides this per test.
@@ -189,6 +230,7 @@ describe("subtitles dubbing scheduler", () => {
     // the future — restore them instead.
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
+    restoreObjectUrlGlobals()
     subtitlesStore.set(adPlayingAtom, false)
     subtitlesStore.set(translatedTrackAtom, [])
     subtitlesStore.set(dubbingStateAtom, { enabled: false, readyCount: 0, failingSince: null, bufferedCount: 0, engine: null })
@@ -678,6 +720,118 @@ describe("subtitles dubbing scheduler", () => {
     video.dispatch("timeupdate")
 
     await vi.waitFor(() => expect(audioInstances.length).toBe(2))
+  })
+
+  /**
+   * The reported crash: the YouTube tab kept dying while dubbing played.
+   *
+   * A clip that fails to decode stayed in the cache, so the next tick found a
+   * "cached" cue, built another element from the same undecodable payload and
+   * failed again — one new element, one fresh copy of the whole data URL and one
+   * media-pipeline buffer per `timeupdate`, four times a second, for as long as
+   * the cue's window lasted.
+   */
+  it("does not rebuild an element for a clip that failed to decode", async () => {
+    const video = createVideo(0)
+    track({ start: 0, end: 60_000, translation: "你好" })
+    const scheduler = createScheduler(video)
+    await scheduler.setEnabled(true)
+    await vi.waitFor(() => expect(audioInstances.length).toBe(1))
+
+    audioInstances[0]!.emit("error")
+
+    for (let tick = 0; tick < 4; tick++) {
+      video.dispatch("timeupdate")
+      await Promise.resolve()
+    }
+
+    // The bad bytes are gone, so no second element is built from them.
+    expect(audioInstances.length).toBe(1)
+    expect((scheduler as any).audioCache.size).toBe(0)
+    expect((scheduler as any).failedKeys.size).toBe(1)
+    // And the blob behind them went with the entry.
+    expect(revokedObjectUrls).toEqual(createdObjectUrls)
+  })
+
+  /**
+   * A cached clip holds a blob alive for as long as its object URL exists, so
+   * dropping the entry without revoking would leak the whole clip.
+   */
+  it("revokes a clip's blob URL when its entry is dropped", async () => {
+    const video = createVideo(1)
+    track(
+      { start: 0, end: 2_000, translation: "一" },
+      { start: 2_000, end: 4_000, translation: "二" },
+    )
+    const scheduler = createScheduler(video)
+
+    await scheduler.setEnabled(true)
+    await vi.waitFor(() => expect((scheduler as any).audioCache.size).toBe(2))
+    expect(createdObjectUrls).toHaveLength(2)
+    expect(revokedObjectUrls).toEqual([])
+
+    // A recut removes the second cue: its clip is no longer reachable.
+    track({ start: 0, end: 2_000, translation: "一" })
+
+    expect((scheduler as any).audioCache.size).toBe(1)
+    expect(revokedObjectUrls).toEqual([createdObjectUrls[1]])
+  })
+
+  it("plays from the clip's blob URL instead of a data URL", async () => {
+    const video = createVideo(1)
+    track({ start: 0, end: 2_000, translation: "你好" })
+    const scheduler = createScheduler(video)
+
+    await scheduler.setEnabled(true)
+    await vi.waitFor(() => expect(audioInstances.length).toBe(1))
+
+    // A blob URL is built once, from the bytes; no per-play string is assembled.
+    expect(createdObjectUrls).toHaveLength(1)
+    expect((scheduler as any).currentAudio.src).toBe(createdObjectUrls[0])
+  })
+
+  /**
+   * Releasing an element must not point it at an empty URL.
+   *
+   * `src = ""` is not "no source": it resolves against the document, so the
+   * browser starts loading the page itself as media, fails, and raises `error`
+   * on the element — which the error handler then read as that clip failing.
+   */
+  it("releases an element without handing it an empty URL", async () => {
+    const video = createVideo(0)
+    track({ start: 0, end: 60_000, translation: "你好" })
+    const scheduler = createScheduler(video)
+    await scheduler.setEnabled(true)
+    await vi.waitFor(() => expect(audioInstances.length).toBe(1))
+    const audio = audioInstances[0]!
+
+    // A seek tears the element down immediately.
+    video.dispatch("seeking")
+
+    expect(audio.removeAttribute).toHaveBeenCalledWith("src")
+    expect(audio.load).toHaveBeenCalled()
+    // Nothing failed here; the clip played fine until it was released.
+    expect((scheduler as any).failedKeys.size).toBe(0)
+  })
+
+  it("ignores an error raised after the element was torn down", async () => {
+    const video = createVideo(0)
+    track({ start: 0, end: 60_000, translation: "你好" })
+    // A real duration keeps the probe out of the way, so `ended` here means the
+    // sentence finished rather than the probe parking the element at its end.
+    audioStubQueue.push({ duration: 4 })
+    const scheduler = createScheduler(video)
+    await scheduler.setEnabled(true)
+    await vi.waitFor(() => expect(audioInstances.length).toBe(1))
+    const audio = audioInstances[0]!
+
+    audio.emit("ended")
+    // A real element can still report an error for the load it was doing when it
+    // was released; that is not the clip failing to decode.
+    audio.emit("error")
+
+    expect((scheduler as any).failedKeys.size).toBe(0)
+    expect((scheduler as any).audioCache.size).toBe(1)
   })
 
   it("clears cached audio when the translated track is replaced", async () => {

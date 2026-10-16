@@ -21,6 +21,7 @@ import { logger } from "@/utils/logger"
 import { sendMessage } from "@/utils/message"
 import { getMimoTtsSettings } from "@/utils/mimo-tts/settings"
 import { splitTextByUtf8Bytes } from "@/utils/server/edge-tts/chunk"
+import { evictOldestTtsAudioClips, TTS_AUDIO_QUERY_ROOT } from "@/utils/tts/clip-cache"
 import { synthesizeSpeech } from "@/utils/tts/synthesize-speech"
 
 interface PlayAudioParams {
@@ -242,9 +243,9 @@ export function useTextToSpeech(
         pitch: ttsConfig.pitch,
         volume: ttsConfig.volume,
       })
-      return queryClient.fetchQuery({
+      const audio = await queryClient.fetchQuery({
         queryKey: [
-          "tts-audio",
+          TTS_AUDIO_QUERY_ROOT,
           {
             text: chunk,
             // Every input that changes the produced bytes belongs in the key.
@@ -273,6 +274,10 @@ export function useTextToSpeech(
           suppressToast: true,
         },
       })
+      // The cache is unbounded otherwise: every chunk of a long selection stays
+      // resident for its `gcTime`. Enforced here, where the cache grows.
+      evictOldestTtsAudioClips(queryClient)
+      return audio
     }
 
     const playChunk = async (audioChunk: SynthesizedAudioChunk): Promise<boolean> => {
