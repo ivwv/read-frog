@@ -11,8 +11,35 @@ import { dubbingStateAtom, subtitlesStore, translatedTrackAtom } from "./atoms"
 
 /** How many cues ahead of the playhead to keep synthesized audio ready. */
 const PREFETCH_CUES = 4
+/** Most synthesis requests in flight at once (the active cue plus prefetch). */
+const MAX_CONCURRENT_SYNTHESIS = 2
 /** Time-compression ceiling; browsers refuse playbackRate above roughly this. */
 const MAX_PLAYBACK_RATE = 4
+/**
+ * Cache ceiling by entry count. With Edge TTS's 48 kbit/s MP3 (~32 KB per
+ * four-second cue including base64) this bounds the cache around 2 MB, plenty
+ * for seek-back-within-a-minute plus the prefetch window.
+ */
+const MAX_CACHE_ENTRIES = 64
+/**
+ * Cache ceiling by resident bytes, for engines whose clips are far larger per
+ * cue (MiMo WAV is ~48 KB/s of PCM). `audioBase64` is a pure-ASCII string, so
+ * its `.length` is the memory it holds in a one-byte V8 string.
+ */
+const MAX_CACHE_BYTES = 12 * 1024 * 1024
+/**
+ * Cues that ended this long before the playhead stay cached, so dragging back
+ * a little to re-hear a sentence is still instant. Beyond that they are
+ * dropped: the seek handler clears `completedCueKeys` anyway, so a far seek
+ * re-synthesizes regardless.
+ */
+const CACHE_KEEP_BEHIND_MS = 90_000
+/**
+ * A transiently failed synthesis (rate limit, network blip) becomes eligible
+ * for a retry after this long. Without a window, one 429 silenced that cue
+ * for the rest of the video.
+ */
+const FAILED_RETRY_MS = 15_000
 /** Speech is never slowed below natural speed: a drawl is worse than a small overrun. */
 const MIN_BASE_RATE = 1
 /** Floor for a cue window in the rate math, guarding against divide-by-zero. */
@@ -34,6 +61,13 @@ interface SynthesizedCue {
    * Null until measured — the rate loop simply waits for it rather than guessing.
    */
   duration: number | null
+  /** Cue window, kept so cache eviction can reason about the playhead. */
+  end: number
+}
+
+/** Failure bookkeeping with an expiry, so transient errors can be retried. */
+interface FailedCue {
+  failedAt: number
 }
 
 export interface SubtitlesDubbingSchedulerOptions {
@@ -85,12 +119,19 @@ export class SubtitlesDubbingScheduler {
   private unsubTranslatedTrack: (() => void) | null = null
   private currentAudio: HTMLAudioElement | null = null
   private currentCueKey: string | null = null
-  /** Synthesized audio keyed by cue identity; cleared when the track changes. */
+  /** Synthesized audio keyed by cue identity; trimmed by budget and position. */
   private audioCache = new Map<string, SynthesizedCue>()
   private inFlight = new Map<string, Promise<void>>()
-  private failedKeys = new Set<string>()
+  private failedKeys = new Map<string, FailedCue>()
   /** Cues already spoken to completion; stops a short sentence from looping. */
   private completedCueKeys = new Set<string>()
+  /**
+   * True while dubbing is enabled but has not actually spoken yet. The video
+   * element is left untouched until the first cue's audio really starts, so a
+   * slow translation pipeline (or a failed one) is heard as the original audio
+   * continuing, never as a mute-then-silence gap.
+   */
+  private mutePending = false
   /**
    * Media time the previous tick observed, or null before the first one. This is
    * what tells a cue we caught on time apart from one we were already past.
@@ -99,6 +140,8 @@ export class SubtitlesDubbingScheduler {
   /** Join offset (fraction of its audio) chosen for the cue about to start. */
   private cueJoinFraction = 0
   private runId = 0
+  /** Last object handed to `dubbingStateAtom`, so unchanged states skip the write. */
+  private lastPublishedState: { enabled: boolean; readyCount: number } | null = null
 
   constructor(options: SubtitlesDubbingSchedulerOptions) {
     this.videoElement = options.videoElement
@@ -135,13 +178,18 @@ export class SubtitlesDubbingScheduler {
     if (mute) {
       this.rememberUserMutedState()
     }
-    this.applyMuteState()
+    // While mute is pending (dubbing armed but not yet speaking) the video is
+    // still playing its own audio at the user's level; the stored state is
+    // applied when the first cue commits the takeover.
+    if (!this.mutePending) {
+      this.applyMuteState()
+    }
   }
 
   /** Takes a 0-100 level, the same scale the settings panel and storage use. */
   async setOriginalVolume(percent: number): Promise<void> {
     this.originalVolume = toElementVolume(percent)
-    if (!this.enabled) return
+    if (!this.enabled || this.mutePending) return
     this.applyMuteState()
   }
 
@@ -165,7 +213,6 @@ export class SubtitlesDubbingScheduler {
     this.lastObservedTimeMs = null
     this.publishState()
   }
-
   destroy(): void {
     this.runId++
     this.stop()
@@ -190,7 +237,10 @@ export class SubtitlesDubbingScheduler {
     }
 
     this.rememberUserMutedState()
-    this.applyMuteState()
+    // Armed, not takeover: the element keeps its own sound until the first cue
+    // actually speaks (see startCue), so the pipeline's cold start is covered
+    // by the original audio instead of by silence.
+    this.mutePending = true
 
     if (!this.unsubTranslatedTrack) {
       this.unsubTranslatedTrack = subtitlesStore.sub(translatedTrackAtom, () => {
@@ -212,11 +262,19 @@ export class SubtitlesDubbingScheduler {
     // treated as a late entry rather than one caught on time.
     this.lastObservedTimeMs = null
     this.cueJoinFraction = 0
+    this.mutePending = false
     this.detachVideoListeners()
     this.unsubTranslatedTrack?.()
     this.unsubTranslatedTrack = null
     this.restoreUserMutedState()
     this.publishState()
+  }
+
+  /** Takes over the video element's sound. Called once the first cue speaks. */
+  private commitPendingMute(): void {
+    if (!this.mutePending) return
+    this.mutePending = false
+    this.applyMuteState()
   }
 
   /**
@@ -238,6 +296,16 @@ export class SubtitlesDubbingScheduler {
     if (this.currentCueKey !== null && !liveKeys.has(this.currentCueKey)) {
       this.stopAudio(FADE_OUT_MS)
       this.currentCueKey = null
+    }
+
+    this.evictCache()
+
+    // Fresh translations can cover the playhead right now, so evaluate what
+    // should be speaking instead of waiting for the next timeupdate (up to
+    // 250 ms). Nothing below writes the translated track, so this cannot
+    // re-enter the subscription that called it.
+    if (this.enabled) {
+      this.tick()
     }
   }
 
@@ -270,7 +338,7 @@ export class SubtitlesDubbingScheduler {
   }
 
   private applyMuteState(): void {
-    if (!this.enabled) return
+    if (!this.enabled || this.mutePending) return
     if (this.muteOriginal) {
       this.videoElement.muted = true
       // The level is left alone while muted: there is nothing to hear, and
@@ -305,6 +373,10 @@ export class SubtitlesDubbingScheduler {
     this.currentCueKey = null
     // Seeking is an explicit jump: sentences may be listened to again.
     this.completedCueKeys.clear()
+    // Audio for the position just left is dead weight now (completed cues get
+    // re-synthesized on the way back anyway); free it immediately rather than
+    // letting it ride along until the next cache insert.
+    this.evictCache()
     // The tick below deliberately runs with the *pre-seek* baseline still in
     // place, so a seek that lands inside a cue is recognised as a late entry and
     // joins part-way rather than replaying the sentence from the top.
@@ -323,7 +395,10 @@ export class SubtitlesDubbingScheduler {
     const timeMs = this.videoElement.currentTime * 1000
     if (cue && timeMs >= cue.start && timeMs <= cue.end) {
       this.applyAdaptiveRate(cue)
-      void audio.play().catch(() => {})
+      void audio
+        .play()
+        .then(() => this.commitPendingMute())
+        .catch(() => {})
     }
   }
 
@@ -391,7 +466,7 @@ export class SubtitlesDubbingScheduler {
     }
 
     const cached = this.audioCache.get(key)
-    if (!cached) {
+    if (!cached || cached.audioBase64.length === 0) {
       // Audio not ready yet. Prefetch only covers cues AFTER this one, so the
       // active cue has to synthesize here; when it lands, synthesizeCue
       // re-ticks and this method runs again with the cache populated.
@@ -416,9 +491,14 @@ export class SubtitlesDubbingScheduler {
     this.attachCueAudioListeners(audio, entry, cue, this.cueJoinFraction)
 
     // Start immediately to keep latency low; the settle pass corrects the rate
-    // (and the join position) as soon as the duration is known.
+    // (and the join position) as soon as the duration is known. The mute of the
+    // video's own audio rides on this promise: until speech is really flowing,
+    // the original audio stays on, which is what makes the takeover seamless.
     if (!this.videoElement.paused) {
-      void audio.play().catch(() => {})
+      void audio
+        .play()
+        .then(() => this.commitPendingMute())
+        .catch(() => {})
     }
   }
 
@@ -478,7 +558,10 @@ export class SubtitlesDubbingScheduler {
 
       // A late-arriving duration can mean playback was never kicked off.
       if (!this.videoElement.paused && audio.paused && !audio.ended) {
-        void audio.play().catch(() => {})
+        void audio
+          .play()
+          .then(() => this.commitPendingMute())
+          .catch(() => {})
       }
     }
 
@@ -622,7 +705,10 @@ export class SubtitlesDubbingScheduler {
       }
     }
 
-    for (const fragment of upcoming) {
+    // Bound the concurrent syntheses: an unbounded burst here is exactly what
+    // trips Edge TTS rate limiting (and its circuit breaker) on enable/seek.
+    const slots = MAX_CONCURRENT_SYNTHESIS - this.inFlight.size
+    for (const fragment of slots > 0 ? upcoming.slice(0, slots) : []) {
       void this.synthesizeCue(fragment)
     }
     this.publishState()
@@ -630,9 +716,14 @@ export class SubtitlesDubbingScheduler {
 
   private async synthesizeCue(fragment: SubtitlesFragment): Promise<void> {
     const key = cueKey(fragment)
-    if (this.audioCache.has(key) || this.inFlight.has(key) || this.failedKeys.has(key)) {
+    if (this.hasUsableCacheFor(key) || this.inFlight.has(key)) {
       return
     }
+    const failed = this.failedKeys.get(key)
+    if (failed && Date.now() - failed.failedAt < FAILED_RETRY_MS) {
+      return
+    }
+    this.failedKeys.delete(key)
 
     const runId = this.runId
     const deferred = (() => {
@@ -649,7 +740,8 @@ export class SubtitlesDubbingScheduler {
       // engine's own error code; there is no null result to branch on.
       const audio = await this.synthesize(fragment.translation!)
       if (runId !== this.runId) return
-      this.audioCache.set(key, { ...audio, duration: null })
+      this.audioCache.set(key, { ...audio, duration: null, end: fragment.end })
+      this.evictCache()
       // Synthesis may have completed a cue the playhead is already inside
       // (e.g. dubbing was just enabled); re-evaluate what should be playing.
       if (this.enabled && key === this.currentCueKey) {
@@ -657,12 +749,67 @@ export class SubtitlesDubbingScheduler {
       }
     } catch (error) {
       if (runId === this.runId) {
-        this.failedKeys.add(key)
+        this.failedKeys.set(key, { failedAt: Date.now() })
         logger.warn("[SubtitlesDubbing] synthesis failed", error)
       }
     } finally {
       this.inFlight.delete(key)
       deferred.resolve()
+    }
+  }
+
+  /**
+   * True when `key` has synthesized audio worth playing. A zero-length clip is
+   * not: some engines return an empty payload on failure, and treating it as a
+   * hit would silence that cue forever.
+   */
+  private hasUsableCacheFor(key: string): boolean {
+    const entry = this.audioCache.get(key)
+    return !!entry && entry.audioBase64.length > 0
+  }
+
+  private cacheBytes(): number {
+    let sum = 0
+    for (const entry of this.audioCache.values()) {
+      sum += entry.audioBase64.length
+    }
+    return sum
+  }
+
+  /**
+   * Keeps the audio cache bounded: first by playhead position (cues that ended
+   * well behind the playhead go), then by budget (oldest-end first) until both
+   * the entry and byte ceilings hold. The cue currently speaking is never
+   * evicted, and eviction only runs at cache-change points, so its cost is a
+   * map scan plus, occasionally, a small sort.
+   */
+  private evictCache(): void {
+    if (this.audioCache.size === 0) return
+
+    const nowMs = this.videoElement.currentTime * 1000
+    if (Number.isFinite(nowMs)) {
+      for (const [key, entry] of this.audioCache) {
+        if (key !== this.currentCueKey && entry.end < nowMs - CACHE_KEEP_BEHIND_MS) {
+          this.audioCache.delete(key)
+        }
+      }
+    }
+
+    if (
+      this.audioCache.size <= MAX_CACHE_ENTRIES &&
+      this.cacheBytes() <= MAX_CACHE_BYTES
+    ) {
+      return
+    }
+
+    const evictable = [...this.audioCache.entries()]
+      .filter(([key]) => key !== this.currentCueKey)
+      .sort((a, b) => a[1].end - b[1].end)
+    for (const [key] of evictable) {
+      if (this.audioCache.size <= MAX_CACHE_ENTRIES && this.cacheBytes() <= MAX_CACHE_BYTES) {
+        break
+      }
+      this.audioCache.delete(key)
     }
   }
 
@@ -720,9 +867,18 @@ export class SubtitlesDubbingScheduler {
   }
 
   private publishState(): void {
-    subtitlesStore.set(dubbingStateAtom, {
-      enabled: this.enabled,
-      readyCount: this.audioCache.size,
-    })
+    const readyCount = this.audioCache.size
+    // A fresh object on every tick made the settings panel re-render a few
+    // times a second for a value that changes only when a cue is synthesized or
+    // evicted. Only writes that carry new information reach the atom.
+    if (
+      this.lastPublishedState &&
+      this.lastPublishedState.enabled === this.enabled &&
+      this.lastPublishedState.readyCount === readyCount
+    ) {
+      return
+    }
+    this.lastPublishedState = { enabled: this.enabled, readyCount }
+    subtitlesStore.set(dubbingStateAtom, this.lastPublishedState)
   }
 }

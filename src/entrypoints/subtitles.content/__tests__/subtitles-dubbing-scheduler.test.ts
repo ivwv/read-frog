@@ -108,6 +108,23 @@ let audioInstances: ReturnType<typeof createAudioStub>[] = []
 /** Options handed to each stub the scheduler creates, consumed in order. */
 let audioStubQueue: { duration?: number; probeDuration?: number }[] = []
 
+/**
+ * Every scheduler built in a test, so the teardown can unsubscribe it.
+ *
+ * `translatedTrackAtom` is a module-level store shared by the whole file, and a
+ * scheduler subscribes to it for as long as it is enabled. A test that leaves
+ * one enabled would have it react to the next test's `track()` calls — and,
+ * since that scheduler's video stub is long gone, its cues would synthesize
+ * against a stale element and inflate the Audio count the next test asserts on.
+ */
+let liveSchedulers: SubtitlesDubbingScheduler[] = []
+
+function createScheduler(video: HTMLVideoElement): SubtitlesDubbingScheduler {
+  const scheduler = new SubtitlesDubbingScheduler({ videoElement: video })
+  liveSchedulers.push(scheduler)
+  return scheduler
+}
+
 function installAudioGlobal() {
   function AudioStub() {
     const options = audioStubQueue.shift() ?? {}
@@ -135,6 +152,7 @@ describe("subtitles dubbing scheduler", () => {
     vi.clearAllMocks()
     audioInstances = []
     audioStubQueue = []
+    liveSchedulers = []
     installAudioGlobal()
     mockSynthesizeSuccess()
     mockConfig()
@@ -146,6 +164,12 @@ describe("subtitles dubbing scheduler", () => {
   })
 
   afterEach(() => {
+    // Unsubscribe before the store is touched again, or a stale scheduler reacts
+    // to the reset below (see `liveSchedulers`).
+    for (const scheduler of liveSchedulers) {
+      scheduler.destroy()
+    }
+    liveSchedulers = []
     vi.unstubAllGlobals()
     subtitlesStore.set(translatedTrackAtom, [])
     subtitlesStore.set(dubbingStateAtom, { enabled: false, readyCount: 0 })
@@ -153,7 +177,7 @@ describe("subtitles dubbing scheduler", () => {
 
   it("starts and publishes enabled state", async () => {
     const video = createVideo()
-    const scheduler = new SubtitlesDubbingScheduler({ videoElement: video })
+    const scheduler = createScheduler(video)
 
     await scheduler.setEnabled(true)
 
@@ -164,7 +188,7 @@ describe("subtitles dubbing scheduler", () => {
   it("synthesizes and plays the cue covering the playhead", async () => {
     const video = createVideo(1)
     track({ start: 0, end: 2_000, translation: "你好" })
-    const scheduler = new SubtitlesDubbingScheduler({ videoElement: video })
+    const scheduler = createScheduler(video)
 
     await scheduler.setEnabled(true)
     await vi.waitFor(() => expect(audioInstances.length).toBeGreaterThan(0))
@@ -184,14 +208,35 @@ describe("subtitles dubbing scheduler", () => {
       { start: 2_000, end: 4_000, translation: "二" },
       { start: 4_000, end: 6_000, translation: "三" },
     )
-    const scheduler = new SubtitlesDubbingScheduler({ videoElement: video })
+    const scheduler = createScheduler(video)
 
     await scheduler.setEnabled(true)
 
-    await vi.waitFor(() => expect(sendMessage.mock.calls.length).toBeGreaterThanOrEqual(3))
+    // The current cue is synthesized first; the rest of the window follows as
+    // the in-flight budget frees up rather than as one unbounded burst.
+    await vi.waitFor(() => expect(sendMessage.mock.calls.length).toBeGreaterThanOrEqual(2))
     const texts = synthRequests().map((r) => r.text)
     expect(texts).toContain("一")
     expect(texts).toContain("二")
+  })
+
+  it("keeps synthesis concurrency bounded on enable", async () => {
+    const video = createVideo(0)
+    track(
+      { start: 0, end: 2_000, translation: "一" },
+      { start: 2_000, end: 4_000, translation: "二" },
+      { start: 4_000, end: 6_000, translation: "三" },
+      { start: 6_000, end: 8_000, translation: "四" },
+    )
+    const scheduler = createScheduler(video)
+
+    await scheduler.setEnabled(true)
+    await vi.waitFor(() => expect(sendMessage.mock.calls.length).toBeGreaterThan(0))
+
+    // One request per cue may be in flight at a time; a burst is what trips
+    // Edge TTS rate limiting and its circuit breaker.
+    const inFlightCalls = synthRequests().length
+    expect(inFlightCalls).toBeLessThanOrEqual(2)
   })
 
   it("does not synthesize cues without a translation", async () => {
@@ -200,7 +245,7 @@ describe("subtitles dubbing scheduler", () => {
       { start: 0, end: 2_000 },
       { start: 2_000, end: 4_000, translation: "有" },
     )
-    const scheduler = new SubtitlesDubbingScheduler({ videoElement: video })
+    const scheduler = createScheduler(video)
 
     await scheduler.setEnabled(true)
     await vi.waitFor(() => expect(sendMessage).toHaveBeenCalled())
@@ -215,7 +260,7 @@ describe("subtitles dubbing scheduler", () => {
       { start: 0, end: 2_000, translation: "一" },
       { start: 4_000, end: 6_000, translation: "二" },
     )
-    const scheduler = new SubtitlesDubbingScheduler({ videoElement: video })
+    const scheduler = createScheduler(video)
     await scheduler.setEnabled(true)
 
     await vi.waitFor(() => expect(audioInstances.length).toBeGreaterThan(0))
@@ -234,7 +279,7 @@ describe("subtitles dubbing scheduler", () => {
   it("pauses and resumes the audio with the video", async () => {
     const video = createVideo(1)
     track({ start: 0, end: 60_000, translation: "你好" })
-    const scheduler = new SubtitlesDubbingScheduler({ videoElement: video })
+    const scheduler = createScheduler(video)
     await scheduler.setEnabled(true)
 
     await vi.waitFor(() => expect(audioInstances.length).toBe(1))
@@ -247,17 +292,42 @@ describe("subtitles dubbing scheduler", () => {
     await vi.waitFor(() => expect(audio.play).toHaveBeenCalled())
   })
 
+  it("keeps the video's own audio until the first cue actually speaks", async () => {
+    mockConfig({
+      videoSubtitles: { dubbing: { enabled: true, muteOriginal: true } },
+    })
+    const video = createVideo(1)
+    video.muted = false
+    // A cue the playhead is inside, so the first tick targets it immediately.
+    track({ start: 0, end: 60_000, translation: "你好" })
+    const scheduler = createScheduler(video)
+
+    await scheduler.setEnabled(true)
+
+    // Armed but not speaking: the original audio must still be audible, or the
+    // translation pipeline's cold start would be heard as silence.
+    expect(video.muted).toBe(false)
+
+    await vi.waitFor(() => expect(audioInstances.length).toBe(1))
+    await vi.waitFor(() => expect(video.muted).toBe(true))
+
+    await scheduler.setEnabled(false)
+    expect(video.muted).toBe(false)
+  })
+
   it("mutes the video while enabled with muteOriginal, restores on stop", async () => {
     mockConfig({
       videoSubtitles: { dubbing: { enabled: true, muteOriginal: true } },
     })
     const video = createVideo(1)
     video.muted = false
-    const scheduler = new SubtitlesDubbingScheduler({ videoElement: video })
+    track({ start: 0, end: 60_000, translation: "你好" })
+    const scheduler = createScheduler(video)
 
     await scheduler.setEnabled(true)
+    await vi.waitFor(() => expect(audioInstances.length).toBe(1))
     await scheduler.setMuteOriginal(true)
-    expect(video.muted).toBe(true)
+    await vi.waitFor(() => expect(video.muted).toBe(true))
 
     await scheduler.setEnabled(false)
     expect(video.muted).toBe(false)
@@ -266,9 +336,11 @@ describe("subtitles dubbing scheduler", () => {
   it("restores the pre-existing muted state, not just unmute", async () => {
     const video = createVideo(1)
     video.muted = true
-    const scheduler = new SubtitlesDubbingScheduler({ videoElement: video })
+    track({ start: 0, end: 60_000, translation: "你好" })
+    const scheduler = createScheduler(video)
 
     await scheduler.setEnabled(true)
+    await vi.waitFor(() => expect(audioInstances.length).toBe(1))
     await scheduler.setMuteOriginal(true)
     expect(video.muted).toBe(true)
 
@@ -281,7 +353,7 @@ describe("subtitles dubbing scheduler", () => {
     await saveDubbingAudioSettings({ originalVolume: 100, dubbingVolume: 40 })
     const video = createVideo(0)
     track({ start: 0, end: 2_000, translation: "你好" })
-    const scheduler = new SubtitlesDubbingScheduler({ videoElement: video })
+    const scheduler = createScheduler(video)
 
     await scheduler.setEnabled(true)
 
@@ -289,14 +361,35 @@ describe("subtitles dubbing scheduler", () => {
     expect(audioInstances[0]!.volume).toBeCloseTo(0.4)
   })
 
+  it("does not mute the video before the first cue's audio is ready", async () => {
+    mockConfig({
+      videoSubtitles: { dubbing: { enabled: true, muteOriginal: true } },
+    })
+    const video = createVideo(0)
+    video.muted = false
+    // The translation pipeline has not delivered anything yet.
+    track()
+    const scheduler = createScheduler(video)
+
+    await scheduler.setEnabled(true)
+    await Promise.resolve()
+
+    // Nothing to speak, so nothing was taken over: the original audio plays on
+    // instead of the video going silent until the first translation lands.
+    expect(video.muted).toBe(false)
+  })
+
   it("applies the stored level to the video while it is not muted", async () => {
     await saveDubbingAudioSettings({ originalVolume: 30, dubbingVolume: 100 })
     const video = createVideo(0)
-    const scheduler = new SubtitlesDubbingScheduler({ videoElement: video })
+    track({ start: 0, end: 60_000, translation: "你好" })
+    const scheduler = createScheduler(video)
 
     await scheduler.setEnabled(true)
+    // The level is the user's own until the first cue takes the element over.
+    await vi.waitFor(() => expect(audioInstances.length).toBe(1))
 
-    expect(video.volume).toBeCloseTo(0.3)
+    await vi.waitFor(() => expect(video.volume).toBeCloseTo(0.3))
   })
 
   it("leaves the video's own level alone while the original is muted", async () => {
@@ -304,11 +397,13 @@ describe("subtitles dubbing scheduler", () => {
     mockConfig({ videoSubtitles: { dubbing: { enabled: true, muteOriginal: true } } })
     const video = createVideo(0)
     video.volume = 0.8
-    const scheduler = new SubtitlesDubbingScheduler({ videoElement: video })
+    track({ start: 0, end: 60_000, translation: "你好" })
+    const scheduler = createScheduler(video)
 
     await scheduler.setEnabled(true)
+    await vi.waitFor(() => expect(audioInstances.length).toBe(1))
 
-    expect(video.muted).toBe(true)
+    await vi.waitFor(() => expect(video.muted).toBe(true))
     // Writing the level here would make unmuting land somewhere the user never
     // chose, so the muted branch must not touch it.
     expect(video.volume).toBe(0.8)
@@ -323,10 +418,12 @@ describe("subtitles dubbing scheduler", () => {
     await saveDubbingAudioSettings({ originalVolume: 30, dubbingVolume: 100 })
     const video = createVideo(0)
     video.volume = 0.8
-    const scheduler = new SubtitlesDubbingScheduler({ videoElement: video })
+    track({ start: 0, end: 60_000, translation: "你好" })
+    const scheduler = createScheduler(video)
 
     await scheduler.setEnabled(true)
-    expect(video.volume).toBeCloseTo(0.3)
+    await vi.waitFor(() => expect(audioInstances.length).toBe(1))
+    await vi.waitFor(() => expect(video.volume).toBeCloseTo(0.3))
 
     await scheduler.setEnabled(false)
     expect(video.volume).toBe(0.8)
@@ -335,7 +432,7 @@ describe("subtitles dubbing scheduler", () => {
   it("follows a level change on the sentence already speaking", async () => {
     const video = createVideo(0)
     track({ start: 0, end: 60_000, translation: "你好" })
-    const scheduler = new SubtitlesDubbingScheduler({ videoElement: video })
+    const scheduler = createScheduler(video)
     await scheduler.setEnabled(true)
 
     await vi.waitFor(() => expect(audioInstances.length).toBe(1))
@@ -350,7 +447,7 @@ describe("subtitles dubbing scheduler", () => {
     const video = createVideo(0)
     track({ start: 0, end: 2_000, translation: "你好" })
     audioStubQueue.push({ duration: 3 }) // 3s of speech in a 2s window
-    const scheduler = new SubtitlesDubbingScheduler({ videoElement: video })
+    const scheduler = createScheduler(video)
     await scheduler.setEnabled(true)
 
     await vi.waitFor(() => expect(audioInstances.length).toBe(1))
@@ -365,7 +462,7 @@ describe("subtitles dubbing scheduler", () => {
     const video = createVideo(0)
     track({ start: 0, end: 10_000, translation: "好" })
     audioStubQueue.push({ duration: 3 }) // 3s of speech in a 10s window
-    const scheduler = new SubtitlesDubbingScheduler({ videoElement: video })
+    const scheduler = createScheduler(video)
     await scheduler.setEnabled(true)
 
     await vi.waitFor(() => expect(audioInstances.length).toBe(1))
@@ -379,7 +476,7 @@ describe("subtitles dubbing scheduler", () => {
     const video = createVideo(0)
     track({ start: 0, end: 2_000, translation: "你好" })
     audioStubQueue.push({ duration: 20 }) // Would need 10x; must clamp to 4.
-    const scheduler = new SubtitlesDubbingScheduler({ videoElement: video })
+    const scheduler = createScheduler(video)
     await scheduler.setEnabled(true)
 
     await vi.waitFor(() => expect(audioInstances.length).toBe(1))
@@ -394,7 +491,7 @@ describe("subtitles dubbing scheduler", () => {
     video.playbackRate = 2
     track({ start: 0, end: 2_000, translation: "你好" })
     audioStubQueue.push({ duration: 3 }) // 1.5x needed for the window
-    const scheduler = new SubtitlesDubbingScheduler({ videoElement: video })
+    const scheduler = createScheduler(video)
     await scheduler.setEnabled(true)
 
     await vi.waitFor(() => expect(audioInstances.length).toBe(1))
@@ -408,7 +505,7 @@ describe("subtitles dubbing scheduler", () => {
     const video = createVideo(0)
     track({ start: 0, end: 4_000, translation: "你好" })
     audioStubQueue.push({ duration: 4 }) // Exactly fits at the start
-    const scheduler = new SubtitlesDubbingScheduler({ videoElement: video })
+    const scheduler = createScheduler(video)
     await scheduler.setEnabled(true)
 
     await vi.waitFor(() => expect(audioInstances.length).toBe(1))
@@ -430,7 +527,7 @@ describe("subtitles dubbing scheduler", () => {
     // The bug users hit: without the probe the rate loop bails out and the
     // sentence overruns its window at 1x, then gets cut off by the next cue.
     audioStubQueue.push({ probeDuration: 4 })
-    const scheduler = new SubtitlesDubbingScheduler({ videoElement: video })
+    const scheduler = createScheduler(video)
     await scheduler.setEnabled(true)
 
     await vi.waitFor(() => expect(audioInstances.length).toBe(1))
@@ -446,7 +543,7 @@ describe("subtitles dubbing scheduler", () => {
     const video = createVideo(3) // 3s into a 4s cue
     track({ start: 0, end: 4_000, translation: "你好" })
     audioStubQueue.push({ duration: 4 })
-    const scheduler = new SubtitlesDubbingScheduler({ videoElement: video })
+    const scheduler = createScheduler(video)
     await scheduler.setEnabled(true)
 
     await vi.waitFor(() => expect(audioInstances.length).toBe(1))
@@ -471,7 +568,7 @@ describe("subtitles dubbing scheduler", () => {
     video.playbackRate = 2
     track({ start: 1_000, end: 3_000, translation: "你好世界" })
     audioStubQueue.push({ duration: 4 })
-    const scheduler = new SubtitlesDubbingScheduler({ videoElement: video })
+    const scheduler = createScheduler(video)
 
     // A first tick before the cue opens, as a running scheduler would have.
     await scheduler.setEnabled(true)
@@ -491,7 +588,7 @@ describe("subtitles dubbing scheduler", () => {
     video.playbackRate = 2
     track({ start: 0, end: 4_000, translation: "你好世界" })
     audioStubQueue.push({ duration: 4 })
-    const scheduler = new SubtitlesDubbingScheduler({ videoElement: video })
+    const scheduler = createScheduler(video)
     await scheduler.setEnabled(true)
 
     await vi.waitFor(() => expect(audioInstances.length).toBe(1))
@@ -512,7 +609,7 @@ describe("subtitles dubbing scheduler", () => {
     const video = createVideo(0)
     track({ start: 2_000, end: 4_000, translation: "你好世界" })
     audioStubQueue.push({ duration: 4 })
-    const scheduler = new SubtitlesDubbingScheduler({ videoElement: video })
+    const scheduler = createScheduler(video)
     await scheduler.setEnabled(true)
 
     // Seek backwards to before the cue, then let playback reach it naturally.
@@ -532,7 +629,7 @@ describe("subtitles dubbing scheduler", () => {
     const video = createVideo(0)
     track({ start: 0, end: 10_000, translation: "你好" })
     audioStubQueue.push({ duration: 2 })
-    const scheduler = new SubtitlesDubbingScheduler({ videoElement: video })
+    const scheduler = createScheduler(video)
     await scheduler.setEnabled(true)
 
     await vi.waitFor(() => expect(audioInstances.length).toBe(1))
@@ -551,7 +648,7 @@ describe("subtitles dubbing scheduler", () => {
     const video = createVideo(0)
     track({ start: 0, end: 10_000, translation: "你好" })
     audioStubQueue.push({ duration: 2 }, { duration: 2 })
-    const scheduler = new SubtitlesDubbingScheduler({ videoElement: video })
+    const scheduler = createScheduler(video)
     await scheduler.setEnabled(true)
 
     await vi.waitFor(() => expect(audioInstances.length).toBe(1))
@@ -567,7 +664,7 @@ describe("subtitles dubbing scheduler", () => {
   it("clears cached audio when the translated track is replaced", async () => {
     const video = createVideo(1)
     track({ start: 0, end: 2_000, translation: "你好" })
-    const scheduler = new SubtitlesDubbingScheduler({ videoElement: video })
+    const scheduler = createScheduler(video)
     await scheduler.setEnabled(true)
     await vi.waitFor(() => expect(sendMessage).toHaveBeenCalled())
     const firstSynthesisCount = sendMessage.mock.calls.length
@@ -583,5 +680,107 @@ describe("subtitles dubbing scheduler", () => {
     // The old cue "你好" must not be re-synthesized from the stale cache.
     const after = synthRequests().filter((r) => r.text === "你好").length
     expect(after).toBeLessThanOrEqual(firstSynthesisCount)
+  })
+
+  it("synthesizes the cue covering the playhead as soon as the track lands", async () => {
+    const video = createVideo(0)
+    // Enabled with nothing translated yet, as the auto-start path does.
+    const scheduler = createScheduler(video)
+    await scheduler.setEnabled(true)
+    expect(sendMessage).not.toHaveBeenCalled()
+
+    // No timeupdate is dispatched: the track change itself has to be what makes
+    // the scheduler notice there is something to say.
+    track({ start: 0, end: 2_000, translation: "你好" })
+
+    await vi.waitFor(() =>
+      expect(synthRequests().some((r) => r.text === "你好")).toBe(true),
+    )
+  })
+
+  it("drops cached audio for cues far behind the playhead", async () => {
+    const video = createVideo(0)
+    track(
+      { start: 0, end: 2_000, translation: "一" },
+      { start: 2_000, end: 4_000, translation: "二" },
+    )
+    const scheduler = createScheduler(video)
+    await scheduler.setEnabled(true)
+    await vi.waitFor(() => expect(sendMessage.mock.calls.length).toBeGreaterThanOrEqual(2))
+
+    const before = (scheduler as any).audioCache.size
+    expect(before).toBeGreaterThan(0)
+
+    // Jump far ahead: every cached cue ended well over the keep-behind window
+    // ago, so the cache must not carry them any further.
+    ;(video as unknown as { currentTime: number }).currentTime = 600
+    video.dispatch("seeking")
+
+    expect((scheduler as any).audioCache.size).toBeLessThan(before)
+  })
+
+  it("keeps the cache bounded by entry count", async () => {
+    const video = createVideo(0)
+    const cues = Array.from({ length: 200 }, (_, index) => ({
+      start: index * 2_000,
+      end: (index + 1) * 2_000,
+      translation: `句${index}`,
+    }))
+    track(...cues)
+    const scheduler = createScheduler(video)
+
+    await scheduler.setEnabled(true)
+    // Walk the whole video so every cue gets synthesized.
+    for (let index = 0; index < cues.length; index++) {
+      ;(video as unknown as { currentTime: number }).currentTime = index * 2 + 1
+      video.dispatch("timeupdate")
+      await Promise.resolve()
+    }
+
+    expect((scheduler as any).audioCache.size).toBeLessThanOrEqual(64)
+  })
+
+  it("retries a cue whose synthesis failed, once the retry window has passed", async () => {
+    const video = createVideo(0)
+    track({ start: 0, end: 60_000, translation: "你好" })
+    sendMessage.mockRejectedValueOnce(new Error("boom"))
+    const scheduler = createScheduler(video)
+
+    await scheduler.setEnabled(true)
+    await vi.waitFor(() =>
+      expect(synthRequests().filter((r) => r.text === "你好").length).toBe(1),
+    )
+
+    // Still inside the window: no retry, or a failing engine would be hammered.
+    ;(video as unknown as { currentTime: number }).currentTime = 1
+    video.dispatch("timeupdate")
+    await Promise.resolve()
+    expect(synthRequests().filter((r) => r.text === "你好").length).toBe(1)
+
+    // Past the window the cue is eligible again instead of being silenced for
+    // the rest of the video.
+    vi.spyOn(Date, "now").mockReturnValue(Date.now() + 60_000)
+    ;(video as unknown as { currentTime: number }).currentTime = 2
+    video.dispatch("timeupdate")
+
+    await vi.waitFor(() =>
+      expect(synthRequests().filter((r) => r.text === "你好").length).toBe(2),
+    )
+  })
+
+  it("does not rewrite dubbing state when nothing about it changed", async () => {
+    const video = createVideo(0)
+    track({ start: 0, end: 60_000, translation: "你好" })
+    const scheduler = createScheduler(video)
+    await scheduler.setEnabled(true)
+    await vi.waitFor(() => expect(audioInstances.length).toBe(1))
+
+    const published = subtitlesStore.get(dubbingStateAtom)
+    // A tick with no synthesis and no eviction must not hand the panel a new
+    // object a few times a second.
+    ;(video as unknown as { currentTime: number }).currentTime = 5
+    video.dispatch("timeupdate")
+
+    expect(subtitlesStore.get(dubbingStateAtom)).toBe(published)
   })
 })

@@ -700,6 +700,13 @@ export class UniversalVideoAdapter implements SubtitlesProvidersAdapter {
     this.subtitlesScheduler?.show()
     this.hideNativeSubtitles()
 
+    // Armed before the translation pipeline starts rather than after it: the
+    // scheduler treats an empty translated track as "nothing to do yet", so
+    // starting early costs nothing and lets the first cue's synthesis race the
+    // subtitle fetch and provider resolve below. Its mute stays pending until
+    // it actually speaks, so the original audio covers the whole cold start.
+    void this.tryAutoStartDubbing()
+
     const message = LOADING_MESSAGE[next]
     if (message) {
       this.subtitlesScheduler?.setState("loading", { message })
@@ -713,12 +720,16 @@ export class UniversalVideoAdapter implements SubtitlesProvidersAdapter {
       this.revertToNativeSource()
       return
     }
-    if (succeeded) {
-      void this.tryAutoStartDubbing()
-    }
   }
 
-  /** When the persisted dubbing preference is on, follow a subtitles session start. */
+  /**
+   * When the persisted dubbing preference is on, follow a subtitles session start.
+   *
+   * Called as soon as the session opens, before the translation pipeline has
+   * produced anything: it arms the scheduler so synthesis can begin the moment
+   * the first translated cue lands, and the scheduler keeps the video's own
+   * audio audible until then.
+   */
   private async tryAutoStartDubbing(): Promise<void> {
     if (!this.dubbingScheduler || this.dubbingScheduler.isEnabled()) return
     try {
@@ -926,6 +937,10 @@ export class UniversalVideoAdapter implements SubtitlesProvidersAdapter {
           message: this.config.silentErrors ? "" : errorMessage,
         })
       }
+      // Dubbing was armed when the session opened; with no translated track it
+      // can only sit silent, so hand the video's audio back and clear the
+      // preference's runtime flag until the next session.
+      void this.dubbingScheduler?.setEnabled(false)
       return false
     }
   }
