@@ -83,12 +83,13 @@ export const dubbingStateAtom = atom<{
    */
   failingSince: number | null
   /**
-   * Synthesized cues ahead of the playhead that have not been spoken yet — the
-   * depth of audio ready to play. Steady playback holds this near the prefetch
-   * window; a value pinned at 0 while the video runs means synthesis cannot keep
-   * up with the playhead (a fast playback rate against a slow engine), which is
-   * what the panel surfaces so the user can lower the speed or raise the
-   * concurrency.
+   * Synthesized cues inside the lookahead window that have not been spoken yet —
+   * the depth of audio ready to play. Steady playback holds it at the window,
+   * which under MiMo is the dubbing concurrency the user set, so the number can
+   * never read past that setting; a value pinned at 0 while the video runs means
+   * synthesis cannot keep up with the playhead (a fast playback rate against a
+   * slow engine), which is what the panel surfaces so the user can lower the
+   * speed or raise the concurrency.
    */
   bufferedCount: number
   /** Engine that produced (or will produce) the audio; null while disabled. */

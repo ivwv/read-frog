@@ -23,7 +23,8 @@ function renderControls({
 }: { dubbingEnabled?: boolean; muteOriginal?: boolean } = {}) {
   const store = createStore()
   store.set(dubbingStateAtom, { enabled: dubbingEnabled, readyCount: 0, failingSince: null, bufferedCount: 0, engine: null })
-  store.set(configFieldsAtomMap.videoSubtitles, {
+  // The config atom is async, so its setter resolves after the write.
+  void store.set(configFieldsAtomMap.videoSubtitles, {
     dubbing: { enabled: dubbingEnabled, muteOriginal },
   } as never)
 

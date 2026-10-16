@@ -1681,7 +1681,7 @@ subtitles:
     originalVolume: Orijinal video səsi
     dubbingVolume: Dublaj səsi
     buffered: $1 hazır
-    bufferedHint: "Oxunmağı gözləyən səsləndirilmiş sətir sayı. 0-a düşərsə sintez oxutma sürətinə çatmır: sürəti azaldın və ya dublyaj paralelliyini artırın."
+    bufferedHint: "Oxunmağı gözləyən səsləndirilmiş sətir sayı; təyin etdiyin dublyaj paralelliyini keçmir. 0-a düşərsə sintez oxutma sürətinə çatmır: sürəti azaldın və ya paralelliyi artırın."
     bufferedHintEdge: Oxunmağı gözləyən səsləndirilmiş sətir sayı.
     failingHint: Dublyaj açıqdır, amma nitq sintezi alınmır. TTS mühərriki tənzimləmələrini yoxlayın.
   actions:

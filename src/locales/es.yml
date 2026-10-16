@@ -1688,7 +1688,7 @@ subtitles:
     originalVolume: Volumen del vídeo original
     dubbingVolume: Volumen del doblaje
     buffered: $1 listas
-    bufferedHint: "Líneas dobladas que esperan reproducción. Si baja a 0, la síntesis no sigue el ritmo de reproducción: reduce la velocidad o sube la concurrencia del doblaje."
+    bufferedHint: "Líneas dobladas que esperan reproducción; nunca superan la concurrencia del doblaje que configuraste. Si baja a 0, la síntesis no sigue el ritmo de reproducción: reduce la velocidad o sube la concurrencia."
     bufferedHintEdge: Líneas dobladas que esperan reproducción.
     failingHint: El doblaje está activado, pero la síntesis de voz está fallando. Revisa la configuración del motor TTS.
   actions:

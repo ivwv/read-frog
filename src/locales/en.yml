@@ -1831,7 +1831,7 @@ subtitles:
     originalVolume: Original video volume
     dubbingVolume: Dubbing volume
     buffered: $1 ready
-    bufferedHint: Spoken lines synthesized and waiting to play. It drops to 0 when synthesis cannot keep up with the playback speed — lower the speed or raise the dubbing concurrency.
+    bufferedHint: Spoken lines synthesized and waiting to play — never more than the dubbing concurrency you set. It drops to 0 when synthesis cannot keep up with the playback speed — lower the speed or raise the concurrency.
     bufferedHintEdge: Spoken lines synthesized and waiting to play.
     failingHint: Dubbing is on but synthesis is failing. Check the TTS engine settings.
   actions:

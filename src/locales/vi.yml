@@ -1683,7 +1683,7 @@ subtitles:
     originalVolume: Âm lượng video gốc
     dubbingVolume: Âm lượng lồng tiếng
     buffered: $1 sẵn sàng
-    bufferedHint: Số dòng đã thuyết minh đang chờ phát. Nếu về 0 nghĩa là tốc độ tổng hợp không theo kịp tốc độ phát — hãy giảm tốc độ phát hoặc tăng số luồng thuyết minh.
+    bufferedHint: Số dòng đã thuyết minh đang chờ phát, không vượt quá số luồng thuyết minh bạn đặt. Nếu về 0 nghĩa là tốc độ tổng hợp không theo kịp tốc độ phát — hãy giảm tốc độ phát hoặc tăng số luồng thuyết minh.
     bufferedHintEdge: Số dòng đã thuyết minh đang chờ phát.
     failingHint: Thuyết minh đang bật nhưng tổng hợp giọng nói bị lỗi. Hãy kiểm tra cài đặt engine TTS.
   actions:

@@ -92,8 +92,7 @@ interface SynthesizedCue {
    * separator, so the identity cannot be recovered by splitting it back off.
    */
   cueIdentity: string
-  /** Cue window, kept so cache eviction and the buffer readout can use the playhead. */
-  start: number
+  /** Cue end, so eviction can measure the entry's distance from the playhead. */
   end: number
 }
 
@@ -184,8 +183,10 @@ function synthesisFingerprint(config: TTSConfig | null, settings: MimoTtsSetting
  *   replaying that sentence from its start would overflow the window.
  * - A cue that still overruns (rate capped) is faded out under the next one
  *   rather than cut mid-word, and a sentence is never replayed once finished.
- * - Audio for the next PREFETCH_CUES cues is synthesized ahead of the playhead,
- *   so a seek waits only on whatever is not yet cached.
+ * - Audio for the cues inside the lookahead window — PREFETCH_CUES, or the user's
+ *   dubbing concurrency under MiMo — is synthesized ahead of the playhead, and
+ *   nothing beyond that window is requested, so a seek waits only on whatever the
+ *   window does not already hold.
  */
 export class SubtitlesDubbingScheduler {
   private videoElement: HTMLVideoElement
@@ -892,17 +893,60 @@ export class SubtitlesDubbingScheduler {
   }
 
   /**
-   * How many cues ahead to keep ready. The window is at least the concurrency
-   * (a request that cannot start this tick is worthless next tick) and, for
-   * MiMo, wide enough to cover the video's own speed: at 4x the playhead eats
-   * four cues per cue-window, so a fixed window of 4 would drain between ticks.
+   * How many cues ahead of the playhead to keep ready: the horizon the prefetch
+   * fills, and the ceiling on what the buffer readout can count.
+   *
+   * Under MiMo this is exactly the user's concurrency setting, so the number the
+   * panel shows can never exceed the number the user chose. It used to be scaled
+   * by the video's playback rate, which is what let a 12-concurrency setting read
+   * "15 ready": the readout was measuring a derived number rather than the
+   * setting, and a seek that re-exposed already-cached cues pushed it higher
+   * still. The rate needs no factor here — concurrency is what decides how fast
+   * the buffer refills, and depth beyond it only hedges against a stalled
+   * endpoint, which raising the setting buys more directly.
+   *
+   * Edge keeps its fixed window: its request budget is capped for the circuit
+   * breaker's sake, and the MiMo slider must not move it.
    */
   private prefetchWindow(): number {
     if (!this.synthesisFingerprintCache?.startsWith("mimo")) {
       return PREFETCH_CUES
     }
-    const rate = this.videoElement.playbackRate > 0 ? this.videoElement.playbackRate : 1
-    return Math.max(PREFETCH_CUES, Math.ceil(this.mimoConcurrency * Math.min(rate, MAX_PLAYBACK_RATE)))
+    return this.mimoConcurrency
+  }
+
+  /**
+   * The cues the buffer is meant to hold: the next `prefetchWindow()` translated
+   * cues after the playhead, nearest first.
+   *
+   * Prefetch and the panel's readout share this list, so the number the user
+   * watches is exactly the window being filled. Counting every cached cue ahead
+   * of the playhead instead let a seek re-expose cues from the position it left
+   * (they stay cached so seeking back is instant) and read well past the setting.
+   */
+  private lookaheadCues(
+    track: SubtitlesFragment[],
+    activeCue: SubtitlesFragment | null,
+  ): SubtitlesFragment[] {
+    const timeMs = this.videoElement.currentTime * 1000
+    const window = this.prefetchWindow()
+    const upcoming: SubtitlesFragment[] = []
+
+    if (activeCue) {
+      const startIndex = track.indexOf(activeCue)
+      for (let i = startIndex + 1; i < track.length && upcoming.length < window; i++) {
+        const fragment = track[i]!
+        if (fragment.translation) upcoming.push(fragment)
+      }
+    } else {
+      // Between cues (or right after a seek): prefetch the next cues from now.
+      for (const fragment of track) {
+        if (upcoming.length >= window) break
+        if (fragment.start >= timeMs && fragment.translation) upcoming.push(fragment)
+      }
+    }
+
+    return upcoming
   }
 
   /** Synthesis budget for the active engine. */
@@ -919,30 +963,25 @@ export class SubtitlesDubbingScheduler {
   }
 
   private prefetchAhead(track: SubtitlesFragment[], activeCue: SubtitlesFragment | null): void {
-    const timeMs = this.videoElement.currentTime * 1000
-    const startIndex = activeCue ? track.indexOf(activeCue) : -1
-    const window = this.prefetchWindow()
+    const upcoming = this.lookaheadCues(track, activeCue)
 
-    const upcoming: SubtitlesFragment[] = []
-    if (activeCue) {
-      for (let i = startIndex + 1; i < track.length && upcoming.length < window; i++) {
-        const fragment = track[i]!
-        if (fragment.translation) upcoming.push(fragment)
-      }
-    } else {
-      // Between cues (or right after a seek): prefetch the next cues from now.
-      for (const fragment of track) {
-        if (upcoming.length >= window) break
-        if (fragment.start >= timeMs && fragment.translation) upcoming.push(fragment)
-      }
-    }
+    // Only what the window still lacks. Counting ready and in-flight cues as
+    // covered is what stops a pass from starting work the buffer already holds:
+    // with the previous "first N of the window" slice, a seek that landed in
+    // cached territory spent its whole budget re-checking cached cues, and — the
+    // other way round — a pass could stack a fresh batch on top of one that was
+    // still arriving.
+    const missing = upcoming.filter((fragment) => {
+      const key = cueKey(fragment)
+      return !this.hasUsableCacheFor(key) && !this.inFlight.has(key)
+    })
 
     // Bound the concurrent syntheses: an unbounded burst here is exactly what
     // trips Edge TTS rate limiting (and its circuit breaker) on enable/seek.
     // MiMo's budget is the user's, since its latency is what decides how much
     // parallelism is needed to keep up with the video's speed.
     const slots = this.synthesisConcurrency() - this.inFlight.size
-    for (const fragment of slots > 0 ? upcoming.slice(0, slots) : []) {
+    for (const fragment of slots > 0 ? missing.slice(0, slots) : []) {
       void this.synthesizeCue(fragment)
     }
     this.publishState()
@@ -982,10 +1021,15 @@ export class SubtitlesDubbingScheduler {
         ...clip,
         duration: null,
         cueIdentity: key,
-        start: fragment.start,
         end: fragment.end,
       })
       this.evictCache()
+      // Released before the re-tick below, so that pass sees this request's slot
+      // free and can top the window back up. Leaving it to the `finally` left the
+      // buffer one cue short of the window until the next timeupdate — visible as
+      // a readout that never quite reached the configured number. (`finally`
+      // deletes it again; a Map delete is idempotent.)
+      this.inFlight.delete(key)
       // Synthesis may have completed a cue the playhead is already inside
       // (e.g. dubbing was just enabled); re-evaluate what should be playing.
       if (this.enabled && key === this.currentCueKey) {
@@ -1181,22 +1225,26 @@ export class SubtitlesDubbingScheduler {
   }
 
   /**
-   * Synthesized cues still ahead of the playhead that have not been spoken.
+   * Synthesized cues inside the lookahead window that have not been spoken.
    *
    * This is the depth of audio ready to play, and the readout the user watches:
-   * a healthy run holds it near the prefetch window, while a value stuck at 0
-   * on a running video means the playhead is outrunning synthesis (a high
-   * playback rate against a slow engine). Cues behind the playhead and cues
-   * already spoken are excluded — neither is "waiting to be played".
+   * a healthy run holds it at the window, while a value stuck at 0 on a running
+   * video means the playhead is outrunning synthesis (a high playback rate
+   * against a slow engine). Cues the playhead has passed are not waiting, and
+   * cues beyond the window are not part of the stretch being buffered, so neither
+   * counts — which is what keeps the number from rising past the setting it is
+   * tuned against when a seek re-exposes audio the buffer already held.
    */
   private bufferedCount(): number {
     const timeMs = this.videoElement.currentTime * 1000
     if (!Number.isFinite(timeMs)) return 0
+    const track = subtitlesStore.get(translatedTrackAtom)
+
     let count = 0
-    for (const entry of this.audioCache.values()) {
-      if (entry.start <= timeMs) continue
-      if (this.completedCueKeys.has(entry.cueIdentity)) continue
-      count++
+    for (const fragment of this.lookaheadCues(track, this.findActiveCue(track, timeMs))) {
+      const key = cueKey(fragment)
+      if (this.completedCueKeys.has(key)) continue
+      if (this.hasUsableCacheFor(key)) count++
     }
     return count
   }

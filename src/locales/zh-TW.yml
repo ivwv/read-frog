@@ -1693,7 +1693,7 @@ subtitles:
     originalVolume: 原影片音量
     dubbingVolume: 配音音量
     buffered: 已就緒 $1 條
-    bufferedHint: 已合成、等待播放的語音條數。如果它掉到 0，代表合成速度跟不上播放速度——請降低倍速或調高配音併發數。
+    bufferedHint: 已合成、等待播放的語音條數，最多為你設定的配音併發數。如果它掉到 0，代表合成速度跟不上播放速度——請降低倍速或調高配音併發數。
     bufferedHintEdge: 已合成、等待播放的語音條數。
     failingHint: 配音已開啟，但語音合成失敗。請檢查 TTS 引擎設定。
   actions:

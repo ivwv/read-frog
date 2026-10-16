@@ -291,11 +291,17 @@ describe("subtitles dubbing scheduler", () => {
     )
     const scheduler = createScheduler(video)
 
+    // Park every synthesis in flight, so the request count *is* the number of
+    // concurrent requests rather than a total over time (Edge legitimately
+    // starts one after another as each lands).
+    sendMessage.mockImplementation(() => new Promise(() => {}))
+
     await scheduler.setEnabled(true)
     await vi.waitFor(() => expect(sendMessage.mock.calls.length).toBeGreaterThan(0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
 
-    // One request per cue may be in flight at a time; a burst is what trips
-    // Edge TTS rate limiting and its circuit breaker.
+    // Two at a time at most: a burst is what trips Edge TTS rate limiting and
+    // its circuit breaker.
     const inFlightCalls = synthRequests().length
     expect(inFlightCalls).toBeLessThanOrEqual(2)
   })
@@ -1201,7 +1207,7 @@ describe("subtitles dubbing scheduler", () => {
     expect(synthRequests().length).toBeLessThanOrEqual(2)
   })
 
-  it("widens MiMo's prefetch window with the video's playback rate", async () => {
+  it("keeps MiMo's ready buffer at the configured concurrency, whatever the playback rate", async () => {
     const video = createVideo(0)
     video.playbackRate = 4
     const cues = Array.from({ length: 12 }, (_, index) => ({
@@ -1228,9 +1234,10 @@ describe("subtitles dubbing scheduler", () => {
       expect((scheduler as any).synthesisFingerprintCache?.startsWith("mimo")).toBe(true),
     )
 
-    // At 4x the playhead consumes four cues per cue-window, so the window has
-    // to reach further than the 1x default of 4.
-    expect((scheduler as any).prefetchWindow()).toBeGreaterThan(4)
+    // The depth is the user's number at any speed. Scaling it by the rate is what
+    // let a 12-concurrency setting read "15 ready" at 1.25x — the readout then
+    // measured a derived number instead of the one the user chose.
+    expect((scheduler as any).prefetchWindow()).toBe(4)
   })
 
   it("leaves Edge's budget and window untouched by the MiMo setting", async () => {
@@ -1271,13 +1278,11 @@ describe("subtitles dubbing scheduler", () => {
 
     await scheduler.setEnabled(true)
     // Synthesis is immediate in this mock, so the prefetch fills quickly.
-    await vi.waitFor(() =>
-      expect(subtitlesStore.get(dubbingStateAtom).bufferedCount).toBeGreaterThan(0),
-    )
+    await vi.waitFor(() => expect(subtitlesStore.get(dubbingStateAtom).bufferedCount).toBe(2))
 
-    // The cue covering the playhead is being spoken, not waiting, so it is not
-    // part of the buffer; the ones behind the playhead are not either.
-    expect(subtitlesStore.get(dubbingStateAtom).bufferedCount).toBe(1)
+    // Both cues after the active one are ready (Edge's window is 4, so this is a
+    // partial fill of it). The cue covering the playhead is being spoken rather
+    // than waiting, so it is not part of the buffer.
     expect(subtitlesStore.get(dubbingStateAtom).engine).toBe("edge")
   })
 
@@ -1291,16 +1296,91 @@ describe("subtitles dubbing scheduler", () => {
     const scheduler = createScheduler(video)
 
     await scheduler.setEnabled(true)
-    await vi.waitFor(() =>
-      expect(subtitlesStore.get(dubbingStateAtom).bufferedCount).toBe(1),
-    )
+    await vi.waitFor(() => expect(subtitlesStore.get(dubbingStateAtom).bufferedCount).toBe(2))
 
-    // Move the playhead past the first cue: the buffer is a forward-looking
-    // readout, so audio already behind it stops counting.
-    ;(video as unknown as { currentTime: number }).currentTime = 3
+    // Move the playhead into the last cue: everything the buffer holds is now
+    // behind it, and a forward-looking readout has to drop to 0.
+    ;(video as unknown as { currentTime: number }).currentTime = 5
     video.dispatch("timeupdate")
 
     expect(subtitlesStore.get(dubbingStateAtom).bufferedCount).toBe(0)
+  })
+
+  it("never reads past the configured concurrency when a seek re-exposes cached audio", async () => {
+    const video = createVideo(0)
+    const cues = Array.from({ length: 40 }, (_, index) => ({
+      start: index * 5_000,
+      end: (index + 1) * 5_000,
+      translation: `句${index}`,
+    }))
+    track(...cues)
+    const scheduler = createScheduler(video)
+
+    getMimoTtsSettings.mockResolvedValue({
+      engine: "mimo",
+      apiKey: "k",
+      baseUrl: "https://mimo.test/v1",
+      model: "mimo-v2.5-tts",
+      voice: "冰糖",
+      stylePrompt: "",
+      format: "mp3",
+      concurrency: 12,
+    })
+
+    await scheduler.setEnabled(true)
+    await vi.waitFor(() => expect(subtitlesStore.get(dubbingStateAtom).bufferedCount).toBe(12))
+
+    // Play forward so the window slides and caches clips past it.
+    ;(video as unknown as { currentTime: number }).currentTime = 30
+    video.dispatch("timeupdate")
+    await vi.waitFor(() => expect((scheduler as any).audioCache.size).toBeGreaterThan(12))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const requestsBeforeSeek = synthRequests().length
+
+    // Now drag the playhead back into what is cached. Those clips are held on
+    // purpose — seeking back to them stays instant — but they are not extra
+    // depth: the buffer holds the window ahead of the *new* position and nothing
+    // more, and nothing new is requested for audio it already holds.
+    ;(video as unknown as { currentTime: number }).currentTime = 10
+    video.dispatch("seeking")
+
+    expect(subtitlesStore.get(dubbingStateAtom).bufferedCount).toBe(12)
+    expect(synthRequests().length).toBe(requestsBeforeSeek)
+  })
+
+  it("starts no new synthesis while the window is already ready", async () => {
+    const video = createVideo(0)
+    const cues = Array.from({ length: 20 }, (_, index) => ({
+      start: index * 5_000,
+      end: (index + 1) * 5_000,
+      translation: `句${index}`,
+    }))
+    track(...cues)
+    const scheduler = createScheduler(video)
+
+    getMimoTtsSettings.mockResolvedValue({
+      engine: "mimo",
+      apiKey: "k",
+      baseUrl: "https://mimo.test/v1",
+      model: "mimo-v2.5-tts",
+      voice: "冰糖",
+      stylePrompt: "",
+      format: "mp3",
+      concurrency: 4,
+    })
+
+    await scheduler.setEnabled(true)
+    await vi.waitFor(() => expect(subtitlesStore.get(dubbingStateAtom).bufferedCount).toBe(4))
+    const requestsWhenFull = synthRequests().length
+
+    // Ticks that find the window ready must not start anything: this is the
+    // "request only while ready < the setting" rule the readout is tuned against.
+    for (let index = 0; index < 3; index++) {
+      video.dispatch("timeupdate")
+    }
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(synthRequests().length).toBe(requestsWhenFull)
   })
 
   it("reports zero buffer and no engine while dubbing is off", async () => {

@@ -90,7 +90,7 @@ export function MimoTtsSection() {
           value={settings.engine}
           // A select reports null when it is cleared; keep the stored engine.
           onValueChange={(value) => {
-            if (value) update({ engine: value as MimoTtsSettings["engine"] })
+            if (value) update({ engine: value })
           }}
         >
           <SelectTrigger size="sm" aria-label={i18n.t("options.tts.mimo.engine")}>
@@ -222,7 +222,7 @@ export function MimoTtsSection() {
             <Select
               value={settings.format}
               onValueChange={(value) => {
-                if (value) update({ format: value as MimoTtsSettings["format"] })
+                if (value) update({ format: value })
               }}
             >
               <SelectTrigger size="sm" aria-label={i18n.t("options.tts.mimo.audioFormat")}>

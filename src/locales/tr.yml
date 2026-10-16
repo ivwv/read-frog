@@ -1683,7 +1683,7 @@ subtitles:
     originalVolume: Orijinal video ses düzeyi
     dubbingVolume: Dublaj ses düzeyi
     buffered: $1 hazır
-    bufferedHint: "Çalınmayı bekleyen seslendirilmiş satır sayısı. 0'a düşerse sentez oynatma hızına yetişemiyor demektir: hızı düşürün veya dublaj eşzamanlılığını artırın."
+    bufferedHint: "Çalınmayı bekleyen seslendirilmiş satır sayısı; ayarladığın dublaj eşzamanlılığını aşmaz. 0'a düşerse sentez oynatma hızına yetişemiyor demektir: hızı düşürün veya eşzamanlılığı artırın."
     bufferedHintEdge: Çalınmayı bekleyen seslendirilmiş satır sayısı.
     failingHint: Dublaj açık ama konuşma sentezi başarısız oluyor. TTS motor ayarlarını kontrol edin.
   actions:

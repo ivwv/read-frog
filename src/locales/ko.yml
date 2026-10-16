@@ -1683,7 +1683,7 @@ subtitles:
     originalVolume: 원본 영상 볼륨
     dubbingVolume: 더빙 볼륨
     buffered: $1개 준비됨
-    bufferedHint: 합성되어 재생을 기다리는 음성 수입니다. 0이 되면 합성이 재생 속도를 따라가지 못하는 것이므로 재생 속도를 낮추거나 더빙 동시 실행 수를 늘리세요.
+    bufferedHint: 합성되어 재생을 기다리는 음성 수입니다. 설정한 더빙 동시 실행 수를 넘지 않습니다. 0이 되면 합성이 재생 속도를 따라가지 못하는 것이므로 재생 속도를 낮추거나 동시 실행 수를 늘리세요.
     bufferedHintEdge: 합성되어 재생을 기다리는 음성 수입니다.
     failingHint: 더빙이 켜져 있지만 음성 합성에 실패했습니다. TTS 엔진 설정을 확인하세요.
   actions:
