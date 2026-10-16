@@ -8,6 +8,14 @@ import { MIMO_TTS_VOICE_DESIGN_MODEL } from "@/utils/mimo-tts/constants"
 
 /** A whole cue is synthesized in one round trip; past this it is not coming back. */
 const MIMO_TTS_TIMEOUT_MS = 30_000
+/**
+ * One retry for failures the API itself calls transient (429, 5xx, timeout,
+ * network). Edge TTS gets the same treatment in its own layer with retries and
+ * a circuit breaker; without this, a single blip cost a cue its slot in the
+ * dubbing timeline (the retry window there is minutes, not seconds).
+ */
+const MIMO_TTS_MAX_RETRIES = 1
+const MIMO_TTS_RETRY_DELAY_MS = 600
 
 /**
  * MiMo answers with JSON, not audio: the bytes ride base64-encoded inside
@@ -27,6 +35,10 @@ interface MimoChatMessage {
 
 function resolveChatCompletionsUrl(baseUrl: string): string {
   return `${baseUrl.trim().replace(/\/+$/, "")}/chat/completions`
+}
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 function failure(
@@ -128,6 +140,31 @@ export async function synthesizeMimoTts(
     audio.voice = voice.trim()
   }
 
+  // Only failures the API itself calls transient get the second attempt;
+  // auth and parameter errors would just fail the same way twice.
+  let lastFailure: MimoTtsSynthesizeWireResponse | null = null
+  for (let attempt = 0; attempt <= MIMO_TTS_MAX_RETRIES; attempt++) {
+    if (attempt > 0) {
+      await wait(MIMO_TTS_RETRY_DELAY_MS)
+    }
+    const response = await synthesizeOnce(baseUrl, apiKey, model, messages, audio, format)
+    if (response.ok || !response.error.retryable) {
+      return response
+    }
+    lastFailure = response
+  }
+
+  return lastFailure!
+}
+
+async function synthesizeOnce(
+  baseUrl: string,
+  apiKey: string,
+  model: string,
+  messages: MimoChatMessage[],
+  audio: { format: MimoTtsFormat; voice?: string },
+  format: MimoTtsFormat,
+): Promise<MimoTtsSynthesizeWireResponse> {
   const controller = new AbortController()
   const timeoutId = setTimeout(() => controller.abort(), MIMO_TTS_TIMEOUT_MS)
 

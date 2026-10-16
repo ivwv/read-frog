@@ -1411,6 +1411,9 @@ options:
       audioFormatDescription: MP3 ocupa mucho menos. WAV lleva una duración exacta, así que el doblaje puede empezarlo con más precisión.
       formatMp3: MP3 (más pequeño)
       formatWav: WAV (duración exacta)
+      concurrency: Concurrencia del doblaje
+      concurrencyDescription: Cuántas líneas de subtítulos se pueden doblar por adelantado. Súbelo si ves a 2x o más rápido y el doblaje se retrasa; bájalo si la API empieza a rechazar solicitudes.
+      concurrencyValue: $1 a la vez
       voiceDesignedValue: Creada desde la instrucción
       stylePromptRequired: El modelo de diseño crea la voz desde la instrucción, así que rellena una.
       test: Probar voz
@@ -1684,6 +1687,10 @@ subtitles:
     muteOriginal: Silenciar el audio original del video
     originalVolume: Volumen del vídeo original
     dubbingVolume: Volumen del doblaje
+    buffered: $1 listas
+    bufferedHint: "Líneas dobladas que esperan reproducción. Si baja a 0, la síntesis no sigue el ritmo de reproducción: reduce la velocidad o sube la concurrencia del doblaje."
+    bufferedHintEdge: Líneas dobladas que esperan reproducción.
+    failingHint: El doblaje está activado, pero la síntesis de voz está fallando. Revisa la configuración del motor TTS.
   actions:
     downloadTranslated: Descargar subtítulos traducidos
     downloadTranslatedPreparing: Preparando subtítulos, los videos largos pueden tardar más

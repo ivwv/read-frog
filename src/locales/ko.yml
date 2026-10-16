@@ -1406,6 +1406,9 @@ options:
       audioFormatDescription: MP3는 훨씬 작습니다. WAV는 정확한 길이를 담아 더빙 시작 판단이 정확합니다.
       formatMp3: MP3 (작음)
       formatWav: WAV (정확한 길이)
+      concurrency: 더빙 동시 실행 수
+      concurrencyDescription: 미리 음성 합성할 자막 줄 수입니다. 2배 이상 속도로 볼 때 더빙이 뒤처지면 늘리고, API가 요청을 거부하기 시작하면 줄이세요.
+      concurrencyValue: 동시 $1개
       voiceDesignedValue: 스타일 지시에서 생성
       stylePromptRequired: 음성 디자인 모델은 스타일 지시에서 음성을 만들므로 지시를 입력해야 합니다.
       test: 미리 듣기
@@ -1679,6 +1682,10 @@ subtitles:
     muteOriginal: 원본 영상 소리 음소거
     originalVolume: 원본 영상 볼륨
     dubbingVolume: 더빙 볼륨
+    buffered: $1개 준비됨
+    bufferedHint: 합성되어 재생을 기다리는 음성 수입니다. 0이 되면 합성이 재생 속도를 따라가지 못하는 것이므로 재생 속도를 낮추거나 더빙 동시 실행 수를 늘리세요.
+    bufferedHintEdge: 합성되어 재생을 기다리는 음성 수입니다.
+    failingHint: 더빙이 켜져 있지만 음성 합성에 실패했습니다. TTS 엔진 설정을 확인하세요.
   actions:
     downloadTranslated: 번역 자막 다운로드
     downloadTranslatedPreparing: 자막 준비 중, 긴 동영상은 시간이 더 걸릴 수 있습니다

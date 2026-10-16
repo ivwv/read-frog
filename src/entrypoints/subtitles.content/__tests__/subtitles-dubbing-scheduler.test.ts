@@ -3,14 +3,16 @@ import {
   DEFAULT_DUBBING_AUDIO_SETTINGS,
   saveDubbingAudioSettings,
 } from "@/utils/subtitles/dubbing-audio"
-import { dubbingStateAtom, subtitlesStore, translatedTrackAtom } from "../atoms"
+import { adPlayingAtom, dubbingStateAtom, subtitlesStore, translatedTrackAtom } from "../atoms"
 import { SubtitlesDubbingScheduler } from "../subtitles-dubbing-scheduler"
 
 const getLocalConfig = vi.hoisted(() => vi.fn<() => Promise<any>>())
 const sendMessage = vi.hoisted(() => vi.fn<(...args: any[]) => any>())
+const getMimoTtsSettings = vi.hoisted(() => vi.fn<() => Promise<any>>())
 
 vi.mock("@/utils/config/storage", () => ({ getLocalConfig }))
 vi.mock("@/utils/message", () => ({ sendMessage }))
+vi.mock("@/utils/mimo-tts/settings", () => ({ getMimoTtsSettings }))
 
 const AUDIO_B64 = "aGVsbG8="
 
@@ -156,11 +158,23 @@ describe("subtitles dubbing scheduler", () => {
     installAudioGlobal()
     mockSynthesizeSuccess()
     mockConfig()
+    // The engine defaults to Edge; the concurrency test overrides this per test.
+    getMimoTtsSettings.mockResolvedValue({
+      engine: "edge",
+      apiKey: "",
+      baseUrl: "https://token-plan-cn.xiaomimimo.com/v1",
+      model: "mimo-v2.5-tts",
+      voice: "冰糖",
+      stylePrompt: "",
+      format: "mp3",
+      concurrency: 4,
+    })
     // The levels live in storage, which outlives a test; reset them so one
     // test's setting cannot decide another's expectations.
     await saveDubbingAudioSettings(DEFAULT_DUBBING_AUDIO_SETTINGS)
+    subtitlesStore.set(adPlayingAtom, false)
     subtitlesStore.set(translatedTrackAtom, [])
-    subtitlesStore.set(dubbingStateAtom, { enabled: false, readyCount: 0 })
+    subtitlesStore.set(dubbingStateAtom, { enabled: false, readyCount: 0, failingSince: null, bufferedCount: 0, engine: null })
   })
 
   afterEach(() => {
@@ -170,9 +184,14 @@ describe("subtitles dubbing scheduler", () => {
       scheduler.destroy()
     }
     liveSchedulers = []
+    // clearAllMocks drops call records but keeps implementations, so a
+    // Date.now spy mocked forward in one test would keep every later test in
+    // the future — restore them instead.
+    vi.restoreAllMocks()
     vi.unstubAllGlobals()
+    subtitlesStore.set(adPlayingAtom, false)
     subtitlesStore.set(translatedTrackAtom, [])
-    subtitlesStore.set(dubbingStateAtom, { enabled: false, readyCount: 0 })
+    subtitlesStore.set(dubbingStateAtom, { enabled: false, readyCount: 0, failingSince: null, bufferedCount: 0, engine: null })
   })
 
   it("starts and publishes enabled state", async () => {
@@ -682,6 +701,59 @@ describe("subtitles dubbing scheduler", () => {
     expect(after).toBeLessThanOrEqual(firstSynthesisCount)
   })
 
+  /**
+   * The reported bug: playback re-requested a whole window of cues every time a
+   * new line started.
+   *
+   * Translation batches land continuously and each one re-publishes the track as
+   * a fresh array with more cues appended, so this handler runs every few
+   * seconds. Pruning compared the cache's keys — which carry the synthesis
+   * fingerprint — against a set of bare cue identities, so nothing ever matched
+   * and every batch dropped the entire cache, throwing away audio that had
+   * already been paid for.
+   */
+  it("keeps already-synthesized audio when a later batch appends to the track", async () => {
+    const video = createVideo(1)
+    track(
+      { start: 0, end: 2_000, translation: "一" },
+      { start: 2_000, end: 4_000, translation: "二" },
+    )
+    const scheduler = createScheduler(video)
+
+    await scheduler.setEnabled(true)
+    await vi.waitFor(() => expect((scheduler as any).audioCache.size).toBe(2))
+
+    // A batch lands: same cues, one more appended. Nothing here was invalidated.
+    // The atom subscription runs synchronously, so the cache can be read right
+    // after the write instead of racing the re-synthesis it would trigger.
+    track(
+      { start: 0, end: 2_000, translation: "一" },
+      { start: 2_000, end: 4_000, translation: "二" },
+      { start: 4_000, end: 6_000, translation: "三" },
+    )
+
+    // Both cues are still in the track, so both must still be cached. Dropping
+    // them is what made playback re-request a whole window every few seconds.
+    expect((scheduler as any).audioCache.size).toBe(2)
+  })
+
+  it("still drops audio whose cue disappeared from the track", async () => {
+    const video = createVideo(1)
+    track(
+      { start: 0, end: 2_000, translation: "一" },
+      { start: 2_000, end: 4_000, translation: "二" },
+    )
+    const scheduler = createScheduler(video)
+
+    await scheduler.setEnabled(true)
+    await vi.waitFor(() => expect((scheduler as any).audioCache.size).toBe(2))
+
+    // A recut removes the second cue entirely.
+    track({ start: 0, end: 2_000, translation: "一" })
+
+    expect((scheduler as any).audioCache.size).toBe(1)
+  })
+
   it("synthesizes the cue covering the playhead as soon as the track lands", async () => {
     const video = createVideo(0)
     // Enabled with nothing translated yet, as the auto-start path does.
@@ -782,5 +854,318 @@ describe("subtitles dubbing scheduler", () => {
     video.dispatch("timeupdate")
 
     expect(subtitlesStore.get(dubbingStateAtom)).toBe(published)
+  })
+
+  it("goes silent while an ad plays and resumes when it ends", async () => {
+    const video = createVideo(1)
+    track({ start: 0, end: 60_000, translation: "你好" })
+    const scheduler = createScheduler(video)
+    await scheduler.setEnabled(true)
+    await vi.waitFor(() => expect(audioInstances.length).toBe(1))
+    const firstAudio = audioInstances[0]!
+
+    // The ad takes over the same <video> and its own timeline.
+    subtitlesStore.set(adPlayingAtom, true)
+
+    // The handover fades out rather than cutting; either way the element must
+    // be parked quickly, and no new cue may open against the ad's clock.
+    await vi.waitFor(() => expect(firstAudio.pause).toHaveBeenCalled())
+
+    ;(video as unknown as { currentTime: number }).currentTime = 10
+    video.dispatch("timeupdate")
+    expect(audioInstances.length).toBe(1)
+
+    // Back to the main video: speech is re-evaluated from the real clock.
+    subtitlesStore.set(adPlayingAtom, false)
+    ;(video as unknown as { currentTime: number }).currentTime = 3
+    video.dispatch("timeupdate")
+    expect(subtitlesStore.get(adPlayingAtom)).toBe(false)
+  })
+
+  it("does not speak a completed cue again after an ad, nor mid-ad", async () => {
+    const video = createVideo(1)
+    track({ start: 0, end: 60_000, translation: "你好" })
+    const scheduler = createScheduler(video)
+    await scheduler.setEnabled(true)
+    await vi.waitFor(() => expect(audioInstances.length).toBe(1))
+
+    subtitlesStore.set(adPlayingAtom, true)
+    // Mid-ad ticks must not open a new cue against the ad's clock.
+    ;(video as unknown as { currentTime: number }).currentTime = 10
+    video.dispatch("timeupdate")
+    expect(audioInstances.length).toBe(1)
+  })
+
+  it("invalidates cached audio when the engine or voice changes", async () => {
+    const video = createVideo(0)
+    track({ start: 0, end: 60_000, translation: "你好" })
+    const scheduler = createScheduler(video)
+    await scheduler.setEnabled(true)
+    await vi.waitFor(() => expect(synthRequests().length).toBeGreaterThan(0))
+    expect((scheduler as any).audioCache.size).toBeGreaterThan(0)
+
+    // A voice change must not keep playing clips synthesized with the old one.
+    getLocalConfig.mockResolvedValue({
+      tts: { defaultVoice: "zh-CN-YunxiNeural", rate: 0, pitch: 0, volume: 0 },
+      language: { targetCode: "cmn" },
+      videoSubtitles: { dubbing: { enabled: true, muteOriginal: false } },
+    })
+
+    ;(video as unknown as { currentTime: number }).currentTime = 20
+    video.dispatch("seeking")
+    ;(video as unknown as { currentTime: number }).currentTime = 21
+    video.dispatch("timeupdate")
+
+    await vi.waitFor(() => expect((scheduler as any).audioCache.size).toBeGreaterThan(0))
+    // Every clip still cached was synthesized after the change landed.
+    const fingerprint = (scheduler as any).synthesisFingerprintCache as string
+    expect(fingerprint).toContain("edge")
+  })
+
+  it("prefers the user's per-language voice mapping over the built-in default", async () => {
+    getLocalConfig.mockResolvedValue({
+      tts: {
+        defaultVoice: "en-US-AndrewMultilingualNeural",
+        languageVoices: { cmn: "zh-CN-YunxiNeural" },
+        rate: 0,
+        pitch: 0,
+        volume: 0,
+      },
+      language: { targetCode: "cmn" },
+      videoSubtitles: { dubbing: { enabled: true, muteOriginal: false } },
+    })
+    const video = createVideo(0)
+    track({ start: 0, end: 60_000, translation: "你好" })
+    const scheduler = createScheduler(video)
+
+    await scheduler.setEnabled(true)
+
+    await vi.waitFor(() => expect(synthRequests().length).toBeGreaterThan(0))
+    expect(synthRequests()[0]!.voice).toBe("zh-CN-YunxiNeural")
+  })
+
+  it("publishes a failure streak, and clears it on the next success", async () => {
+    const video = createVideo(0)
+    track({ start: 0, end: 60_000, translation: "你好" })
+    // Every synthesis fails while the streak is being observed, then succeeds.
+    sendMessage.mockRejectedValue(new Error("invalid key"))
+    const scheduler = createScheduler(video)
+
+    await scheduler.setEnabled(true)
+    await vi.waitFor(() =>
+      expect(subtitlesStore.get(dubbingStateAtom).failingSince).not.toBeNull(),
+    )
+
+    // Recovery: the panel's hint must drop as soon as one cue succeeds.
+    sendMessage.mockResolvedValue({ ok: true, audioBase64: AUDIO_B64, contentType: "audio/mpeg" })
+    // A different cue forces a fresh synthesis rather than a cached failure.
+    track(
+      { start: 0, end: 60_000, translation: "你好" },
+      { start: 60_000, end: 120_000, translation: "世界" },
+    )
+    ;(video as unknown as { currentTime: number }).currentTime = 61
+    video.dispatch("seeking")
+    video.dispatch("timeupdate")
+
+    await vi.waitFor(() =>
+      expect(subtitlesStore.get(dubbingStateAtom).failingSince).toBeNull(),
+    )
+  })
+
+  it("allows MiMo more synthesis concurrency than Edge", async () => {
+    const video = createVideo(0)
+    track(
+      { start: 0, end: 60_000, translation: "一" },
+      { start: 60_000, end: 120_000, translation: "二" },
+      { start: 120_000, end: 180_000, translation: "三" },
+      { start: 180_000, end: 240_000, translation: "四" },
+      { start: 240_000, end: 300_000, translation: "五" },
+    )
+    const scheduler = createScheduler(video)
+
+    // MiMo engine: read by `start()` and again per cue, which is what both the
+    // fingerprint and the concurrency gate key off.
+    getMimoTtsSettings.mockResolvedValue({
+      engine: "mimo",
+      apiKey: "k",
+      baseUrl: "https://mimo.test/v1",
+      model: "mimo-v2.5-tts",
+      voice: "冰糖",
+      stylePrompt: "",
+      format: "mp3",
+      concurrency: 4,
+    })
+
+    // Park every synthesis in flight so the concurrency window is observable
+    // tick by tick instead of racing immediate mocks.
+    sendMessage.mockImplementation(() => new Promise(() => {}))
+
+    await scheduler.setEnabled(true)
+
+    // The engine is known before the first tick (seeded in `start`), so the very
+    // first pass already runs on MiMo's deeper budget — Edge's cap of 2 would
+    // have started only 2, which is what delayed the cold-start buffer.
+    await vi.waitFor(() => expect(synthRequests().length).toBeGreaterThan(2))
+    expect(synthRequests().length).toBeLessThanOrEqual(4)
+  })
+
+  it("takes MiMo concurrency from the user's setting", async () => {
+    const video = createVideo(0)
+    const cues = Array.from({ length: 12 }, (_, index) => ({
+      start: index * 60_000,
+      end: (index + 1) * 60_000,
+      translation: `句${index}`,
+    }))
+    track(...cues)
+    const scheduler = createScheduler(video)
+
+    getMimoTtsSettings.mockResolvedValue({
+      engine: "mimo",
+      apiKey: "k",
+      baseUrl: "https://mimo.test/v1",
+      model: "mimo-v2.5-tts",
+      voice: "冰糖",
+      stylePrompt: "",
+      format: "mp3",
+      concurrency: 2,
+    })
+
+    // Park synthesis so nothing drains the budget mid-test.
+    sendMessage.mockImplementation(() => new Promise(() => {}))
+
+    await scheduler.setEnabled(true)
+    await vi.waitFor(() =>
+      expect((scheduler as any).synthesisFingerprintCache?.startsWith("mimo")).toBe(true),
+    )
+
+    // A stored concurrency of 2 must cap the pass at 2, not at the old default.
+    ;(video as unknown as { currentTime: number }).currentTime = 1
+    video.dispatch("seeking")
+    video.dispatch("timeupdate")
+    await Promise.resolve()
+
+    expect(synthRequests().length).toBeLessThanOrEqual(2)
+  })
+
+  it("widens MiMo's prefetch window with the video's playback rate", async () => {
+    const video = createVideo(0)
+    video.playbackRate = 4
+    const cues = Array.from({ length: 12 }, (_, index) => ({
+      start: index * 60_000,
+      end: (index + 1) * 60_000,
+      translation: `句${index}`,
+    }))
+    track(...cues)
+    const scheduler = createScheduler(video)
+
+    getMimoTtsSettings.mockResolvedValue({
+      engine: "mimo",
+      apiKey: "k",
+      baseUrl: "https://mimo.test/v1",
+      model: "mimo-v2.5-tts",
+      voice: "冰糖",
+      stylePrompt: "",
+      format: "mp3",
+      concurrency: 4,
+    })
+
+    await scheduler.setEnabled(true)
+    await vi.waitFor(() =>
+      expect((scheduler as any).synthesisFingerprintCache?.startsWith("mimo")).toBe(true),
+    )
+
+    // At 4x the playhead consumes four cues per cue-window, so the window has
+    // to reach further than the 1x default of 4.
+    expect((scheduler as any).prefetchWindow()).toBeGreaterThan(4)
+  })
+
+  it("leaves Edge's budget and window untouched by the MiMo setting", async () => {
+    const video = createVideo(0)
+    video.playbackRate = 4
+    const scheduler = createScheduler(video)
+    getMimoTtsSettings.mockResolvedValue({
+      engine: "edge",
+      apiKey: "",
+      baseUrl: "https://token-plan-cn.xiaomimimo.com/v1",
+      model: "mimo-v2.5-tts",
+      voice: "冰糖",
+      stylePrompt: "",
+      format: "mp3",
+      concurrency: 8,
+    })
+    track({ start: 0, end: 60_000, translation: "你好" })
+
+    await scheduler.setEnabled(true)
+    await vi.waitFor(() =>
+      expect((scheduler as any).synthesisFingerprintCache?.startsWith("edge")).toBe(true),
+    )
+
+    // Edge's own limits stay put: the slider is a MiMo control, and Edge's
+    // budget exists to stay under its rate limiter.
+    expect((scheduler as any).synthesisConcurrency()).toBe(2)
+    expect((scheduler as any).prefetchWindow()).toBe(4)
+  })
+
+  it("publishes how much spoken audio is waiting ahead of the playhead", async () => {
+    const video = createVideo(0)
+    track(
+      { start: 0, end: 2_000, translation: "一" },
+      { start: 2_000, end: 4_000, translation: "二" },
+      { start: 4_000, end: 6_000, translation: "三" },
+    )
+    const scheduler = createScheduler(video)
+
+    await scheduler.setEnabled(true)
+    // Synthesis is immediate in this mock, so the prefetch fills quickly.
+    await vi.waitFor(() =>
+      expect(subtitlesStore.get(dubbingStateAtom).bufferedCount).toBeGreaterThan(0),
+    )
+
+    // The cue covering the playhead is being spoken, not waiting, so it is not
+    // part of the buffer; the ones behind the playhead are not either.
+    expect(subtitlesStore.get(dubbingStateAtom).bufferedCount).toBe(1)
+    expect(subtitlesStore.get(dubbingStateAtom).engine).toBe("edge")
+  })
+
+  it("counts only audio that is still ahead of the playhead", async () => {
+    const video = createVideo(0)
+    track(
+      { start: 0, end: 2_000, translation: "一" },
+      { start: 2_000, end: 4_000, translation: "二" },
+      { start: 4_000, end: 6_000, translation: "三" },
+    )
+    const scheduler = createScheduler(video)
+
+    await scheduler.setEnabled(true)
+    await vi.waitFor(() =>
+      expect(subtitlesStore.get(dubbingStateAtom).bufferedCount).toBe(1),
+    )
+
+    // Move the playhead past the first cue: the buffer is a forward-looking
+    // readout, so audio already behind it stops counting.
+    ;(video as unknown as { currentTime: number }).currentTime = 3
+    video.dispatch("timeupdate")
+
+    expect(subtitlesStore.get(dubbingStateAtom).bufferedCount).toBe(0)
+  })
+
+  it("reports zero buffer and no engine while dubbing is off", async () => {
+    const video = createVideo(0)
+    track(
+      { start: 0, end: 2_000, translation: "一" },
+      { start: 2_000, end: 4_000, translation: "二" },
+    )
+    const scheduler = createScheduler(video)
+
+    await scheduler.setEnabled(true)
+    await vi.waitFor(() =>
+      expect(subtitlesStore.get(dubbingStateAtom).bufferedCount).toBeGreaterThan(0),
+    )
+
+    await scheduler.setEnabled(false)
+
+    const state = subtitlesStore.get(dubbingStateAtom)
+    expect(state.bufferedCount).toBe(0)
+    expect(state.engine).toBeNull()
   })
 })

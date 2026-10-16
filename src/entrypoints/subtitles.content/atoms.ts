@@ -1,6 +1,7 @@
 import type { ViewId } from "./ui/subtitles-settings-panel/views"
 import type { SectionId } from "./ui/subtitles-sidebar/sections"
 import type { SubtitlesSource } from "@/utils/constants/subtitles"
+import type { MimoTtsEngine } from "@/utils/mimo-tts/types"
 import type { StateData, SubtitlesFragment, SubtitlesState } from "@/utils/subtitles/types"
 import { atom, createStore } from "jotai"
 import { configFieldsAtomMap } from "@/utils/atoms/config"
@@ -72,9 +73,32 @@ export const subtitlesSidebarActiveSectionAtom = atom<SectionId>(DEFAULT_SECTION
  * Dubbing (Edge TTS read-aloud of translated cues) runtime state.
  * Owned by SubtitlesDubbingScheduler; the settings panel only reads it.
  */
-export const dubbingStateAtom = atom<{ enabled: boolean; readyCount: number }>({
+export const dubbingStateAtom = atom<{
+  enabled: boolean
+  readyCount: number
+  /**
+   * Timestamp of the first failure in the current failure streak, null when
+   * the last synthesis succeeded. The panel uses it to hint that dubbing is on
+   * but cannot currently speak (bad key, unreachable endpoint).
+   */
+  failingSince: number | null
+  /**
+   * Synthesized cues ahead of the playhead that have not been spoken yet — the
+   * depth of audio ready to play. Steady playback holds this near the prefetch
+   * window; a value pinned at 0 while the video runs means synthesis cannot keep
+   * up with the playhead (a fast playback rate against a slow engine), which is
+   * what the panel surfaces so the user can lower the speed or raise the
+   * concurrency.
+   */
+  bufferedCount: number
+  /** Engine that produced (or will produce) the audio; null while disabled. */
+  engine: MimoTtsEngine | null
+}>({
   enabled: false,
   readyCount: 0,
+  failingSince: null,
+  bufferedCount: 0,
+  engine: null,
 })
 
 export const TranslatedDownloadPhase = {

@@ -22,7 +22,7 @@ function renderControls({
   muteOriginal = false,
 }: { dubbingEnabled?: boolean; muteOriginal?: boolean } = {}) {
   const store = createStore()
-  store.set(dubbingStateAtom, { enabled: dubbingEnabled, readyCount: 0 })
+  store.set(dubbingStateAtom, { enabled: dubbingEnabled, readyCount: 0, failingSince: null, bufferedCount: 0, engine: null })
   store.set(configFieldsAtomMap.videoSubtitles, {
     dubbing: { enabled: dubbingEnabled, muteOriginal },
   } as never)

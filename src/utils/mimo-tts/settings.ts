@@ -1,6 +1,10 @@
 import type { MimoTtsSettings } from "./types"
 import { storage } from "#imports"
-import { DEFAULT_MIMO_TTS_SETTINGS, MIMO_TTS_STORAGE_ITEM } from "./constants"
+import {
+  clampMimoTtsConcurrency,
+  DEFAULT_MIMO_TTS_SETTINGS,
+  MIMO_TTS_STORAGE_ITEM,
+} from "./constants"
 
 /**
  * Reads the MiMo settings, merged over the defaults.
@@ -16,7 +20,10 @@ import { DEFAULT_MIMO_TTS_SETTINGS, MIMO_TTS_STORAGE_ITEM } from "./constants"
  */
 export async function getMimoTtsSettings(): Promise<MimoTtsSettings> {
   const stored = await storage.getItem<Partial<MimoTtsSettings>>(MIMO_TTS_STORAGE_ITEM)
-  return { ...DEFAULT_MIMO_TTS_SETTINGS, ...(stored ?? {}) }
+  const merged = { ...DEFAULT_MIMO_TTS_SETTINGS, ...(stored ?? {}) }
+  // Clamped on read rather than on write: a value can arrive from an older
+  // build (no field at all) or a hand-edited record, and both are consumed here.
+  return { ...merged, concurrency: clampMimoTtsConcurrency(merged.concurrency) }
 }
 
 /**
@@ -25,5 +32,8 @@ export async function getMimoTtsSettings(): Promise<MimoTtsSettings> {
  * per keystroke would let two in-flight writes drop one another's fields.
  */
 export async function saveMimoTtsSettings(settings: MimoTtsSettings): Promise<void> {
-  await storage.setItem<MimoTtsSettings>(MIMO_TTS_STORAGE_ITEM, settings)
+  await storage.setItem<MimoTtsSettings>(MIMO_TTS_STORAGE_ITEM, {
+    ...settings,
+    concurrency: clampMimoTtsConcurrency(settings.concurrency),
+  })
 }

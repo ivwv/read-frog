@@ -1,6 +1,11 @@
 import type { ViewId } from "."
 import { VISIBLE_SUBPAGES } from "."
-import { DubbingMuteOriginal, DubbingToggle, DubbingVolumeControls } from "../components/dubbing-toggle"
+import {
+  DubbingBufferStatus,
+  DubbingMuteOriginal,
+  DubbingToggle,
+  DubbingVolumeControls,
+} from "../components/dubbing-toggle"
 import { DownloadSourceSubtitles } from "../components/download-source-subtitles"
 import { DownloadTranslatedSubtitles } from "../components/download-translated-subtitles"
 import { RequestAiSubtitlesItem } from "../components/request-ai-subtitles-item"
@@ -17,6 +22,7 @@ export function MainMenu({ onNavigate }: { onNavigate: (id: ViewId) => void }) {
         <DubbingToggle />
         <DubbingMuteOriginal />
         <DubbingVolumeControls />
+        <DubbingBufferStatus />
         <DownloadTranslatedSubtitles />
         <DownloadSourceSubtitles />
         <SubtitlesSidebarItem />

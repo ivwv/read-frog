@@ -1541,8 +1541,9 @@ options:
       engineEdge: Edge TTS (built in, free)
       engineMimo: MiMo TTS (Xiaomi)
       apiKey: API key
-      apiKeyDescription: Sent only to the endpoint below. Stored on this device, outside the synced settings.
+      apiKeyDescription: Your key is sent to the base URL below in the Authorization header. Stored on this device, outside the synced settings.
       baseUrl: API base URL
+      baseUrlDescription: Every request — including your API key — goes to this address. Make sure it is the endpoint you trust.
       model: Model
       voice: Voice
       voiceDesigned: The design model invents its own voice from the instruction below.
@@ -1553,6 +1554,9 @@ options:
       audioFormatDescription: MP3 is far smaller. WAV carries an exact duration, so dubbing can start it more precisely.
       formatMp3: MP3 (smaller)
       formatWav: WAV (exact duration)
+      concurrency: Dubbing concurrency
+      concurrencyDescription: How many subtitle lines may be spoken up front. Raise it if you watch at 2x or faster and the dubbing lags behind; lower it if the API starts rejecting requests.
+      concurrencyValue: $1 at a time
       voiceDesignedValue: Designed from the instruction
       stylePromptRequired: The design model invents a voice from the instruction, so fill one in.
       test: Test voice
@@ -1826,6 +1830,10 @@ subtitles:
     muteOriginal: Mute original video audio
     originalVolume: Original video volume
     dubbingVolume: Dubbing volume
+    buffered: $1 ready
+    bufferedHint: Spoken lines synthesized and waiting to play. It drops to 0 when synthesis cannot keep up with the playback speed — lower the speed or raise the dubbing concurrency.
+    bufferedHintEdge: Spoken lines synthesized and waiting to play.
+    failingHint: Dubbing is on but synthesis is failing. Check the TTS engine settings.
   actions:
     downloadTranslated: Download translated subtitles
     downloadTranslatedPreparing: Preparing subtitles, longer videos may take a while

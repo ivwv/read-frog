@@ -1406,6 +1406,9 @@ options:
       audioFormatDescription: MP3 ははるかに小さくなります。WAV は正確な長さを持つため、吹き替えの開始判定が正確になります。
       formatMp3: MP3（小さい）
       formatWav: WAV（正確な長さ）
+      concurrency: 吹き替えの同時実行数
+      concurrencyDescription: 先に音声合成しておく字幕の行数です。2 倍以上の速度で視聴して吹き替えが遅れる場合は増やし、API がリクエストを拒否し始めたら減らしてください。
+      concurrencyValue: 同時 $1 件
       voiceDesignedValue: スタイル指示から生成
       stylePromptRequired: 音色デザインモデルはスタイル指示から音声を作るため、入力が必要です。
       test: 試聴
@@ -1679,6 +1682,10 @@ subtitles:
     muteOriginal: 元の動画の音声をミュート
     originalVolume: 元の動画の音量
     dubbingVolume: 吹き替えの音量
+    buffered: $1 件準備完了
+    bufferedHint: 合成済みで再生待ちの音声の数です。0 になったら合成が再生速度に追いついていません。再生速度を下げるか、吹き替えの同時実行数を増やしてください。
+    bufferedHintEdge: 合成済みで再生待ちの音声の数です。
+    failingHint: 吹き替えはオンですが、音声合成に失敗しています。TTS エンジン設定を確認してください。
   actions:
     downloadTranslated: 翻訳字幕をダウンロード
     downloadTranslatedPreparing: 字幕を準備中。長い動画は時間がかかる場合があります

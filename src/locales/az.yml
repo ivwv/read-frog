@@ -1411,6 +1411,9 @@ options:
       audioFormatDescription: MP3 qat-qat kiçikdir. WAV dəqiq müddət daşıyır, buna görə dublaj başlama anını daha dəqiq seçir.
       formatMp3: MP3 (daha kiçik)
       formatWav: WAV (dəqiq müddət)
+      concurrency: Dublyaj paralelliyi
+      concurrencyDescription: Əvvəlcədən səsləndirilə bilən altyazı sətirlərinin sayı. 2x və ya daha sürətli baxarkən dublyaj geri qalırsa artırın; API sorğuları rədd etməyə başlayarsa azaldın.
+      concurrencyValue: Eyni anda $1
       voiceDesignedValue: Təlimata görə yaradılır
       stylePromptRequired: Səs dizaynı modeli səsi təlimatdan yaradır, buna görə təlimat yazın.
       test: Səsi yoxla
@@ -1677,6 +1680,10 @@ subtitles:
     muteOriginal: Orijinal video səsini söndür
     originalVolume: Orijinal video səsi
     dubbingVolume: Dublaj səsi
+    buffered: $1 hazır
+    bufferedHint: "Oxunmağı gözləyən səsləndirilmiş sətir sayı. 0-a düşərsə sintez oxutma sürətinə çatmır: sürəti azaldın və ya dublyaj paralelliyini artırın."
+    bufferedHintEdge: Oxunmağı gözləyən səsləndirilmiş sətir sayı.
+    failingHint: Dublyaj açıqdır, amma nitq sintezi alınmır. TTS mühərriki tənzimləmələrini yoxlayın.
   actions:
     downloadTranslated: Tərcümə edilmiş subtitrləri endir
     downloadTranslatedPreparing: Subtitrlər hazırlanır, uzun videolar bir qədər vaxt apara bilər

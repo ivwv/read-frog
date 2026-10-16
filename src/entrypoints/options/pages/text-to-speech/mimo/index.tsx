@@ -12,12 +12,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/base-ui/select"
+import { SliderComfortable } from "@/components/ui/base-ui/slider"
 import { Textarea } from "@/components/ui/base-ui/textarea"
 import { useTextToSpeech } from "@/hooks/use-text-to-speech"
 import { ANALYTICS_SURFACE } from "@/types/analytics"
 import { configFieldsAtomMap } from "@/utils/atoms/config"
 import { i18n } from "@/utils/i18n"
 import {
+  MAX_MIMO_TTS_CONCURRENCY,
+  MIN_MIMO_TTS_CONCURRENCY,
   MIMO_TTS_FORMATS,
   MIMO_TTS_MODELS,
   MIMO_TTS_PRESET_VOICES,
@@ -123,7 +126,11 @@ export function MimoTtsSection() {
             />
           </ConfigItem>
 
-          <ConfigItem id="mimo-base-url" title={i18n.t("options.tts.mimo.baseUrl")}>
+          <ConfigItem
+            id="mimo-base-url"
+            title={i18n.t("options.tts.mimo.baseUrl")}
+            description={i18n.t("options.tts.mimo.baseUrlDescription")}
+          >
             <Input
               className="w-full sm:w-80"
               aria-label={i18n.t("options.tts.mimo.baseUrl")}
@@ -231,6 +238,26 @@ export function MimoTtsSection() {
                 </SelectGroup>
               </SelectContent>
             </Select>
+          </ConfigItem>
+
+          <ConfigItem
+            id="mimo-concurrency"
+            title={i18n.t("options.tts.mimo.concurrency")}
+            description={i18n.t("options.tts.mimo.concurrencyDescription")}
+          >
+            <div className="w-56">
+              <SliderComfortable
+                variant="scrubber"
+                aria-label={i18n.t("options.tts.mimo.concurrency")}
+                min={MIN_MIMO_TTS_CONCURRENCY}
+                max={MAX_MIMO_TTS_CONCURRENCY}
+                step={1}
+                value={settings.concurrency}
+                onChange={(value) => update({ concurrency: value })}
+                onCommit={(value) => update({ concurrency: value })}
+                formatValue={(value) => i18n.t("options.tts.mimo.concurrencyValue", [`${value}`])}
+              />
+            </div>
           </ConfigItem>
 
           <ConfigItem

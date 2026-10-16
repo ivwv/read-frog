@@ -1,11 +1,21 @@
 import type { DubbingAudioSettings } from "@/utils/subtitles/dubbing-audio"
-import { IconMicrophone, IconVolume, IconVolumeOff } from "@tabler/icons-react"
+import {
+  IconAlertTriangle,
+  IconInfoCircle,
+  IconMicrophone,
+  IconPlayerPlayFilled,
+  IconVolume,
+  IconVolumeOff,
+} from "@tabler/icons-react"
 import { useAtom } from "jotai"
-import { useEffect, useState } from "react"
+import { use, useEffect, useState } from "react"
 import { SliderComfortable } from "@/components/ui/base-ui/slider"
 import { Switch } from "@/components/ui/base-ui/switch"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/base-ui/tooltip"
 import { configFieldsAtomMap } from "@/utils/atoms/config"
 import { i18n } from "@/utils/i18n"
+import { ShadowWrapperContext } from "@/utils/react-shadow-host/create-shadow-host"
+import { cn } from "@/utils/styles/utils"
 import {
   getDubbingAudioSettings,
   MAX_DUBBING_VOLUME,
@@ -24,11 +34,16 @@ export function DubbingToggle() {
     configFieldsAtomMap.videoSubtitles,
   )
   const { setDubbingEnabled } = useSubtitlesUI()
-  const dubbingRuntimeEnabled = useAtom(dubbingStateAtom)[0].enabled
+  const shadowWrapper = use(ShadowWrapperContext)
+  const dubbingState = useAtom(dubbingStateAtom)[0]
 
   // The config is the user's persisted preference and also drives the runtime
   // on the next session; the runtime flag is what is actually speaking now.
-  const isEnabled = dubbingRuntimeEnabled
+  const isEnabled = dubbingState.enabled
+  // A failure streak means the switch is on but nothing can be spoken — the
+  // cue is lost, not the whole feature, so a hint on the row itself is the
+  // quietest place that still says what to check.
+  const isFailing = isEnabled && dubbingState.failingSince !== null
 
   const toggle = async (checked: boolean) => {
     // Persist the preference, then drive the scheduler immediately.
@@ -39,7 +54,26 @@ export function DubbingToggle() {
   return (
     <SubtitlesSettingsItem
       icon={<IconVolume className="size-3.5" />}
-      label={title}
+      label={
+        isFailing ? (
+          <span className="inline-flex items-center gap-1.5">
+            <span className="truncate">{title}</span>
+            <Tooltip>
+              <TooltipTrigger render={<span className="inline-flex shrink-0 items-center" />}>
+                <IconAlertTriangle className="size-3.5 text-amber-500" />
+              </TooltipTrigger>
+              <TooltipContent
+                container={shadowWrapper}
+                className="max-w-64 border border-border bg-popover text-popover-foreground"
+              >
+                {i18n.t("subtitles.dubbing.failingHint")}
+              </TooltipContent>
+            </Tooltip>
+          </span>
+        ) : (
+          title
+        )
+      }
       labelFor={switchId}
     >
       <Switch
@@ -48,6 +82,63 @@ export function DubbingToggle() {
         onCheckedChange={(checked) => void toggle(checked)}
         aria-label={title}
       />
+    </SubtitlesSettingsItem>
+  )
+}
+
+/**
+ * How much spoken audio is waiting to play.
+ *
+ * Shown while dubbing is on, because the number is the only visible signal that
+ * synthesis is losing ground: a video played faster than the engine answers
+ * drains this to 0 and starts dropping sentences, and the fix is either a lower
+ * speed or a higher dubbing concurrency. It is a readout, not a control — the
+ * two knobs it points at are the video's own speed and the MiMo settings page.
+ */
+export function DubbingBufferStatus() {
+  const shadowWrapper = use(ShadowWrapperContext)
+  const dubbingState = useAtom(dubbingStateAtom)[0]
+
+  if (!dubbingState.enabled) return null
+
+  const isMimo = dubbingState.engine === "mimo"
+  const isStarved = dubbingState.bufferedCount === 0
+
+  return (
+    <SubtitlesSettingsItem
+      icon={<IconPlayerPlayFilled className="size-3.5" />}
+      label={
+        <span className="inline-flex items-center gap-1.5">
+          <span className="truncate">{i18n.t("subtitles.dubbing.buffered", [`${dubbingState.bufferedCount}`])}</span>
+          <Tooltip>
+            <TooltipTrigger render={<span className="inline-flex shrink-0 items-center" />}>
+              <IconInfoCircle className="size-3.5 text-muted-foreground" />
+            </TooltipTrigger>
+            <TooltipContent
+              container={shadowWrapper}
+              className="max-w-64 border border-border bg-popover text-popover-foreground"
+            >
+              {/* The advice only applies where there is a concurrency dial to
+                  turn, so Edge gets the plain description. */}
+              {isMimo
+                ? i18n.t("subtitles.dubbing.bufferedHint")
+                : i18n.t("subtitles.dubbing.bufferedHintEdge")}
+            </TooltipContent>
+          </Tooltip>
+        </span>
+      }
+    >
+      <span
+        // Amber when nothing is ready to speak: on a running video that is the
+        // signal to act, and colour is what carries it at a glance.
+        className={cn(
+          "text-xs tabular-nums",
+          isStarved ? "font-medium text-amber-500" : "text-muted-foreground",
+        )}
+        aria-live="polite"
+      >
+        {dubbingState.bufferedCount}
+      </span>
     </SubtitlesSettingsItem>
   )
 }

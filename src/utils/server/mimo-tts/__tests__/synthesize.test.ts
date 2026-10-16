@@ -260,6 +260,59 @@ describe("synthesizeMimoTts", () => {
     expect(error.retryable).toBe(true)
   })
 
+  it("retries a rate-limited request once before giving up", async () => {
+    const fetchMock = vi
+      .fn<(input: string, init: RequestInit) => Promise<unknown>>()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 429,
+        json: async () => ({ error: { message: "slow down" } }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => successBody(),
+      })
+    vi.stubGlobal("fetch", fetchMock)
+
+    const response = successOf(await synthesizeMimoTts(baseRequest()))
+
+    expect(response.audioBase64).toBe(AUDIO_B64)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it("does not retry an auth failure", async () => {
+    const fetchMock = vi
+      .fn<(input: string, init: RequestInit) => Promise<unknown>>()
+      .mockResolvedValue({
+        ok: false,
+        status: 401,
+        json: async () => ({ error: { message: "Invalid API Key" } }),
+      })
+    vi.stubGlobal("fetch", fetchMock)
+
+    const error = failureOf(await synthesizeMimoTts(baseRequest()))
+
+    expect(error.code).toBe("INVALID_API_KEY")
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it("gives up after one retry when the server keeps failing", async () => {
+    const fetchMock = vi
+      .fn<(input: string, init: RequestInit) => Promise<unknown>>()
+      .mockResolvedValue({
+        ok: false,
+        status: 503,
+        json: async () => ({ error: { message: "boom" } }),
+      })
+    vi.stubGlobal("fetch", fetchMock)
+
+    const error = failureOf(await synthesizeMimoTts(baseRequest()))
+
+    expect(error.code).toBe("SERVER_ERROR")
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
   it("refuses to call the API without a key, a base URL, or text", async () => {
     const fetchMock = mockResponse(successBody())
 

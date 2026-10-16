@@ -1416,6 +1416,9 @@ options:
       audioFormatDescription: MP3 体积小得多；WAV 带精确时长，配音的起播判断更准。
       formatMp3: MP3（体积小）
       formatWav: WAV（时长精确）
+      concurrency: 配音并发数
+      concurrencyDescription: 允许提前合成的字幕条数。以 2 倍或更快速度观看时如果配音跟不上，可以调高；如果接口开始拒绝请求，可以调低。
+      concurrencyValue: 同时 $1 条
       voiceDesignedValue: 由风格指令生成
       stylePromptRequired: 音色设计模型会根据风格指令生成音色，请先填写指令。
       test: 试听
@@ -1689,6 +1692,10 @@ subtitles:
     muteOriginal: 静音原视频声音
     originalVolume: 原视频音量
     dubbingVolume: 配音音量
+    buffered: 已就绪 $1 条
+    bufferedHint: 已合成、等待播放的语音条数。如果它掉到 0，说明合成速度跟不上播放速度——请降低倍速或调高配音并发数。
+    bufferedHintEdge: 已合成、等待播放的语音条数。
+    failingHint: 配音已开启，但语音合成失败。请检查 TTS 引擎设置。
   actions:
     downloadTranslated: 下载翻译字幕
     downloadTranslatedPreparing: 正在准备字幕，长视频可能需要更久

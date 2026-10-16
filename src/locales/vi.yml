@@ -1406,6 +1406,9 @@ options:
       audioFormatDescription: MP3 nhỏ hơn nhiều. WAV có thời lượng chính xác nên lồng tiếng canh thời điểm bắt đầu chuẩn hơn.
       formatMp3: MP3 (nhỏ hơn)
       formatWav: WAV (thời lượng chính xác)
+      concurrency: Số luồng thuyết minh
+      concurrencyDescription: Số dòng phụ đề có thể được thuyết minh trước. Tăng lên nếu bạn xem ở tốc độ 2x trở lên mà thuyết minh bị chậm; giảm xuống nếu API bắt đầu từ chối yêu cầu.
+      concurrencyValue: $1 cùng lúc
       voiceDesignedValue: Tạo từ chỉ dẫn
       stylePromptRequired: Mô hình thiết kế tạo giọng từ chỉ dẫn, hãy nhập một chỉ dẫn.
       test: Nghe thử
@@ -1679,6 +1682,10 @@ subtitles:
     muteOriginal: Tắt tiếng video gốc
     originalVolume: Âm lượng video gốc
     dubbingVolume: Âm lượng lồng tiếng
+    buffered: $1 sẵn sàng
+    bufferedHint: Số dòng đã thuyết minh đang chờ phát. Nếu về 0 nghĩa là tốc độ tổng hợp không theo kịp tốc độ phát — hãy giảm tốc độ phát hoặc tăng số luồng thuyết minh.
+    bufferedHintEdge: Số dòng đã thuyết minh đang chờ phát.
+    failingHint: Thuyết minh đang bật nhưng tổng hợp giọng nói bị lỗi. Hãy kiểm tra cài đặt engine TTS.
   actions:
     downloadTranslated: Tải phụ đề đã dịch
     downloadTranslatedPreparing: Đang chuẩn bị phụ đề, video dài có thể mất nhiều thời gian hơn

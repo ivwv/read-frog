@@ -1,18 +1,30 @@
 import type { Config } from "@/types/config/config"
 import type { TTSConfig } from "@/types/config/tts"
+import type { MimoTtsEngine, MimoTtsSettings } from "@/utils/mimo-tts/types"
 import type { SubtitlesFragment } from "@/utils/subtitles/types"
 import { EDGE_TTS_FALLBACK_VOICE, getDefaultTTSVoiceForLanguage } from "@/types/config/tts"
 import { getLocalConfig } from "@/utils/config/storage"
 import { logger } from "@/utils/logger"
+import { DEFAULT_MIMO_TTS_CONCURRENCY } from "@/utils/mimo-tts/constants"
 import { getMimoTtsSettings } from "@/utils/mimo-tts/settings"
 import { getDubbingAudioSettings, toElementVolume } from "@/utils/subtitles/dubbing-audio"
 import { synthesizeSpeech } from "@/utils/tts/synthesize-speech"
-import { dubbingStateAtom, subtitlesStore, translatedTrackAtom } from "./atoms"
+import { adPlayingAtom, dubbingStateAtom, subtitlesStore, translatedTrackAtom } from "./atoms"
 
-/** How many cues ahead of the playhead to keep synthesized audio ready. */
+/**
+ * How many cues ahead of the playhead to keep synthesized audio ready, for
+ * Edge TTS. MiMo's window is derived from its configured concurrency instead:
+ * see `prefetchWindow()`.
+ */
 const PREFETCH_CUES = 4
 /** Most synthesis requests in flight at once (the active cue plus prefetch). */
 const MAX_CONCURRENT_SYNTHESIS = 2
+/**
+ * MiMo's concurrency is a user setting (`MimoTtsSettings.concurrency`) rather
+ * than a constant: throughput is `concurrency / latency`, so the budget that
+ * keeps up at 1x falls permanently behind at 2x-4x. `DEFAULT_MIMO_TTS_CONCURRENCY`
+ * in `@/utils/mimo-tts/constants` is the fallback before settings are read.
+ */
 /** Time-compression ceiling; browsers refuse playbackRate above roughly this. */
 const MAX_PLAYBACK_RATE = 4
 /**
@@ -61,7 +73,14 @@ interface SynthesizedCue {
    * Null until measured — the rate loop simply waits for it rather than guessing.
    */
   duration: number | null
-  /** Cue window, kept so cache eviction can reason about the playhead. */
+  /**
+   * Bare cue identity (see `cueKey`), kept alongside the map key because the
+   * key also carries the synthesis fingerprint — which itself contains the
+   * separator, so the identity cannot be recovered by splitting it back off.
+   */
+  cueIdentity: string
+  /** Cue window, kept so cache eviction and the buffer readout can use the playhead. */
+  start: number
   end: number
 }
 
@@ -70,12 +89,40 @@ interface FailedCue {
   failedAt: number
 }
 
+/** How far a cached cue's window sits from the playhead, in ms. */
+function distanceFromPlayhead(entry: { end: number }, nowMs: number): number {
+  if (!Number.isFinite(nowMs)) return entry.end
+  // Measured to the cue's end: behind the playhead that is its nearest edge,
+  // and ahead of it the end is at least as far as the start.
+  return Math.abs(entry.end - nowMs)
+}
+
 export interface SubtitlesDubbingSchedulerOptions {
   videoElement: HTMLVideoElement
 }
 
 function cueKey(fragment: SubtitlesFragment): string {
   return `${fragment.start}\0${fragment.end}\0${fragment.translation ?? ""}`
+}
+
+/**
+ * Everything about the synthesis inputs, other than the text, that changes the
+ * produced bytes: the engine plus the parameters it reads. Cached audio is
+ * keyed by this too, so switching the engine or the voice does not keep
+ * speaking the old clips (mirrors what the read-aloud hook puts in its query
+ * key — see `use-text-to-speech`).
+ */
+function synthesisFingerprint(config: TTSConfig | null, settings: MimoTtsSettings): string {
+  if (settings.engine === "mimo") {
+    return [
+      "mimo",
+      settings.model,
+      settings.voice,
+      settings.stylePrompt.trim(),
+      settings.format,
+    ].join("\0")
+  }
+  return ["edge", config?.rate ?? 0, config?.pitch ?? 0, config?.volume ?? 0].join("\0")
 }
 
 /**
@@ -117,10 +164,19 @@ export class SubtitlesDubbingScheduler {
   /** The level the spoken translation is played at. */
   private dubbingVolume = 1
   private unsubTranslatedTrack: (() => void) | null = null
+  private unsubAdPlaying: (() => void) | null = null
   private currentAudio: HTMLAudioElement | null = null
   private currentCueKey: string | null = null
-  /** Synthesized audio keyed by cue identity; trimmed by budget and position. */
+  /** Synthesized audio keyed by fingerprint+cue identity; trimmed by budget and position. */
   private audioCache = new Map<string, SynthesizedCue>()
+  /** The synthesis inputs the cache was built with; a change invalidates it. */
+  private synthesisFingerprintCache: string | null = null
+  /**
+   * MiMo concurrency as last read from settings. `prefetchAhead` is synchronous
+   * and runs on every tick, so the value is cached here by `synthesize` (which
+   * already reads the settings per cue) rather than awaited per tick.
+   */
+  private mimoConcurrency = DEFAULT_MIMO_TTS_CONCURRENCY
   private inFlight = new Map<string, Promise<void>>()
   private failedKeys = new Map<string, FailedCue>()
   /** Cues already spoken to completion; stops a short sentence from looping. */
@@ -141,7 +197,15 @@ export class SubtitlesDubbingScheduler {
   private cueJoinFraction = 0
   private runId = 0
   /** Last object handed to `dubbingStateAtom`, so unchanged states skip the write. */
-  private lastPublishedState: { enabled: boolean; readyCount: number } | null = null
+  private lastPublishedState: {
+    enabled: boolean
+    readyCount: number
+    failingSince: number | null
+    bufferedCount: number
+    engine: MimoTtsEngine | null
+  } | null = null
+  /** First failure in the current streak, null after any success. */
+  private failingSince: number | null = null
 
   constructor(options: SubtitlesDubbingSchedulerOptions) {
     this.videoElement = options.videoElement
@@ -207,6 +271,7 @@ export class SubtitlesDubbingScheduler {
     this.inFlight.clear()
     this.failedKeys.clear()
     this.completedCueKeys.clear()
+    this.failingSince = null
     this.stopAudio()
     this.currentCueKey = null
     this.cueJoinFraction = 0
@@ -221,17 +286,28 @@ export class SubtitlesDubbingScheduler {
   private async start(): Promise<void> {
     const runId = ++this.runId
     this.enabled = true
+    this.failingSince = null
     this.publishState()
 
     // The mute and level preferences live outside the config; read them once
     // per enable, before the element is taken over below.
     try {
-      const [config, audio] = await Promise.all([getLocalConfig(), getDubbingAudioSettings()])
+      const [config, audio, settings] = await Promise.all([
+        getLocalConfig(),
+        getDubbingAudioSettings(),
+        getMimoTtsSettings(),
+      ])
       if (runId !== this.runId) return
       this.muteOriginal = config?.videoSubtitles.dubbing.muteOriginal ?? false
       this.originalVolume = toElementVolume(audio.originalVolume)
       this.dubbingVolume = toElementVolume(audio.dubbingVolume)
       if (config) this.configCache = { config, at: Date.now() }
+      // Seed the engine before the first tick: `prefetchAhead` sizes its window
+      // and budget from these, and waiting for the first synthesis to reveal
+      // them made the cold start run on Edge's smaller numbers even under MiMo —
+      // exactly the moment the buffer most needs to fill fast.
+      this.mimoConcurrency = settings.concurrency
+      this.synthesisFingerprintCache = synthesisFingerprint(config?.tts ?? null, settings)
     } catch {
       // Keep the previous values; muting and levels are best-effort.
     }
@@ -245,6 +321,15 @@ export class SubtitlesDubbingScheduler {
     if (!this.unsubTranslatedTrack) {
       this.unsubTranslatedTrack = subtitlesStore.sub(translatedTrackAtom, () => {
         this.handleTrackChange()
+      })
+    }
+    // An ad plays through the same <video> element on its own timeline, so
+    // every cue window below is meaningless while it runs. Stop speaking and
+    // hold off until the main video's clock is back.
+    if (!this.unsubAdPlaying) {
+      this.unsubAdPlaying = subtitlesStore.sub(adPlayingAtom, () => {
+        // jotai's subscription callback carries no value; read the atom.
+        this.handleAdPlayingChange(subtitlesStore.get(adPlayingAtom))
       })
     }
 
@@ -266,6 +351,8 @@ export class SubtitlesDubbingScheduler {
     this.detachVideoListeners()
     this.unsubTranslatedTrack?.()
     this.unsubTranslatedTrack = null
+    this.unsubAdPlaying?.()
+    this.unsubAdPlaying = null
     this.restoreUserMutedState()
     this.publishState()
   }
@@ -278,6 +365,25 @@ export class SubtitlesDubbingScheduler {
   }
 
   /**
+   * An ad's timeline is not the video's: the cue covering the playhead while an
+   * ad runs is the ad's own minute, not the sentence the viewer is meant to
+   * hear. Speech stops for the duration, and resumes (from wherever the main
+   * clock now sits) when the ad ends.
+   */
+  private handleAdPlayingChange(playing: boolean): void {
+    if (!this.enabled) return
+    if (playing) {
+      this.stopAudio(FADE_OUT_MS)
+      this.currentCueKey = null
+    } else {
+      // The main clock jumped back; a fresh baseline keeps the first cue after
+      // the ad from being read as a mid-sentence join.
+      this.lastObservedTimeMs = null
+      this.tick()
+    }
+  }
+
+  /**
    * Translation batches land continuously, so the track atom is re-set often.
    * Drop audio whose cue disappeared (a recut, or a source switch) but keep the
    * sentence that is playing — reloading it would restart speech mid-word.
@@ -286,8 +392,10 @@ export class SubtitlesDubbingScheduler {
     const track = subtitlesStore.get(translatedTrackAtom)
     const liveKeys = new Set(track.map(cueKey))
 
-    for (const key of [...this.audioCache.keys()]) {
-      if (!liveKeys.has(key)) this.audioCache.delete(key)
+    // Cache keys carry the synthesis fingerprint as a prefix, so the identity is
+    // compared through the entry rather than the key — see `SynthesizedCue`.
+    for (const [key, entry] of [...this.audioCache]) {
+      if (!liveKeys.has(entry.cueIdentity)) this.audioCache.delete(key)
     }
     for (const key of [...this.completedCueKeys]) {
       if (!liveKeys.has(key)) this.completedCueKeys.delete(key)
@@ -417,6 +525,8 @@ export class SubtitlesDubbingScheduler {
 
   private tick = (): void => {
     if (!this.enabled) return
+    // An ad runs on its own timeline; there is nothing to say against it.
+    if (subtitlesStore.get(adPlayingAtom)) return
     const track = subtitlesStore.get(translatedTrackAtom)
     if (track.length === 0) return
 
@@ -465,7 +575,7 @@ export class SubtitlesDubbingScheduler {
       this.cueJoinFraction = this.computeJoinFraction(cue, timeMs)
     }
 
-    const cached = this.audioCache.get(key)
+    const cached = this.audioCache.get(this.audioKey(key))
     if (!cached || cached.audioBase64.length === 0) {
       // Audio not ready yet. Prefetch only covers cues AFTER this one, so the
       // active cue has to synthesize here; when it lands, synthesizeCue
@@ -567,6 +677,18 @@ export class SubtitlesDubbingScheduler {
 
     audio.addEventListener("loadedmetadata", settle)
     audio.addEventListener("durationchange", settle)
+    audio.addEventListener("error", () => {
+      // A clip that cannot decode (bad engine payload, truncated base64) must
+      // not leave a silent element parked as "speaking": release it and mark
+      // the cue failed so the retry window — not TAIL_GRACE — decides what
+      // happens next.
+      this.failedKeys.set(key, { failedAt: Date.now() })
+      if (this.currentAudio === audio) {
+        this.currentAudio = null
+        this.currentCueKey = null
+      }
+      this.releaseAudio(audio)
+    })
     audio.addEventListener("ended", () => {
       // An `ended` produced by the duration probe is not the sentence finishing.
       if (probing) {
@@ -655,7 +777,9 @@ export class SubtitlesDubbingScheduler {
     const audio = this.currentAudio
     if (!audio || audio.ended) return
 
-    const duration = this.measureDuration(audio, this.audioCache.get(cueKey(cue)))
+    // Looked up through `audioKey`: the cache is keyed by fingerprint + identity,
+    // so a bare cue key silently missed and lost the recorded duration.
+    const duration = this.measureDuration(audio, this.audioCache.get(this.audioKey(cueKey(cue))))
     if (duration === null) {
       // Duration not measured yet; the metadata handler primes the real rate
       // moments later rather than guessing here.
@@ -687,27 +811,57 @@ export class SubtitlesDubbingScheduler {
     }
   }
 
+  /**
+   * How many cues ahead to keep ready. The window is at least the concurrency
+   * (a request that cannot start this tick is worthless next tick) and, for
+   * MiMo, wide enough to cover the video's own speed: at 4x the playhead eats
+   * four cues per cue-window, so a fixed window of 4 would drain between ticks.
+   */
+  private prefetchWindow(): number {
+    if (!this.synthesisFingerprintCache?.startsWith("mimo")) {
+      return PREFETCH_CUES
+    }
+    const rate = this.videoElement.playbackRate > 0 ? this.videoElement.playbackRate : 1
+    return Math.max(PREFETCH_CUES, Math.ceil(this.mimoConcurrency * Math.min(rate, MAX_PLAYBACK_RATE)))
+  }
+
+  /** Synthesis budget for the active engine. */
+  private synthesisConcurrency(): number {
+    return this.synthesisFingerprintCache?.startsWith("mimo")
+      ? this.mimoConcurrency
+      : MAX_CONCURRENT_SYNTHESIS
+  }
+
+  /** Engine the fingerprint was built for, for the panel's readout. */
+  private currentEngine(): MimoTtsEngine | null {
+    if (!this.synthesisFingerprintCache) return null
+    return this.synthesisFingerprintCache.startsWith("mimo") ? "mimo" : "edge"
+  }
+
   private prefetchAhead(track: SubtitlesFragment[], activeCue: SubtitlesFragment | null): void {
     const timeMs = this.videoElement.currentTime * 1000
     const startIndex = activeCue ? track.indexOf(activeCue) : -1
+    const window = this.prefetchWindow()
 
     const upcoming: SubtitlesFragment[] = []
     if (activeCue) {
-      for (let i = startIndex + 1; i < track.length && upcoming.length < PREFETCH_CUES; i++) {
+      for (let i = startIndex + 1; i < track.length && upcoming.length < window; i++) {
         const fragment = track[i]!
         if (fragment.translation) upcoming.push(fragment)
       }
     } else {
       // Between cues (or right after a seek): prefetch the next cues from now.
       for (const fragment of track) {
-        if (upcoming.length >= PREFETCH_CUES) break
+        if (upcoming.length >= window) break
         if (fragment.start >= timeMs && fragment.translation) upcoming.push(fragment)
       }
     }
 
     // Bound the concurrent syntheses: an unbounded burst here is exactly what
     // trips Edge TTS rate limiting (and its circuit breaker) on enable/seek.
-    const slots = MAX_CONCURRENT_SYNTHESIS - this.inFlight.size
+    // MiMo's budget is the user's, since its latency is what decides how much
+    // parallelism is needed to keep up with the video's speed.
+    const slots = this.synthesisConcurrency() - this.inFlight.size
     for (const fragment of slots > 0 ? upcoming.slice(0, slots) : []) {
       void this.synthesizeCue(fragment)
     }
@@ -740,22 +894,43 @@ export class SubtitlesDubbingScheduler {
       // engine's own error code; there is no null result to branch on.
       const audio = await this.synthesize(fragment.translation!)
       if (runId !== this.runId) return
-      this.audioCache.set(key, { ...audio, duration: null, end: fragment.end })
+      this.failingSince = null
+      this.audioCache.set(this.audioKey(key), {
+        ...audio,
+        duration: null,
+        cueIdentity: key,
+        start: fragment.start,
+        end: fragment.end,
+      })
       this.evictCache()
       // Synthesis may have completed a cue the playhead is already inside
       // (e.g. dubbing was just enabled); re-evaluate what should be playing.
       if (this.enabled && key === this.currentCueKey) {
         this.tick()
+      } else {
+        // Nothing else publishes on a completed prefetch: without this the
+        // panel's buffer readout would only move on the next timeupdate, and a
+        // paused video would never show it filling.
+        this.publishState()
       }
     } catch (error) {
       if (runId === this.runId) {
         this.failedKeys.set(key, { failedAt: Date.now() })
+        this.failingSince ??= Date.now()
         logger.warn("[SubtitlesDubbing] synthesis failed", error)
+        // The panel's hint keys off the streak; it has to hear about both the
+        // failure and (via the success path) the recovery.
+        this.publishState()
       }
     } finally {
       this.inFlight.delete(key)
       deferred.resolve()
     }
+  }
+
+  /** Cache key for a cue: its identity, prefixed by the current synthesis inputs. */
+  private audioKey(cueIdentity: string): string {
+    return `${this.synthesisFingerprintCache ?? ""}\0${cueIdentity}`
   }
 
   /**
@@ -764,7 +939,7 @@ export class SubtitlesDubbingScheduler {
    * hit would silence that cue forever.
    */
   private hasUsableCacheFor(key: string): boolean {
-    const entry = this.audioCache.get(key)
+    const entry = this.audioCache.get(this.audioKey(key))
     return !!entry && entry.audioBase64.length > 0
   }
 
@@ -778,10 +953,14 @@ export class SubtitlesDubbingScheduler {
 
   /**
    * Keeps the audio cache bounded: first by playhead position (cues that ended
-   * well behind the playhead go), then by budget (oldest-end first) until both
-   * the entry and byte ceilings hold. The cue currently speaking is never
-   * evicted, and eviction only runs at cache-change points, so its cost is a
-   * map scan plus, occasionally, a small sort.
+   * well behind the playhead go), then by budget until both the entry and byte
+   * ceilings hold. The cue currently speaking is never evicted, and eviction
+   * only runs at cache-change points, so its cost is a map scan plus,
+   * occasionally, a small sort.
+   *
+   * The budget pass drops by distance from the playhead — furthest first, in
+   * either direction — so a seek that leaves the whole cache ahead of the
+   * playhead still keeps the cues about to be reached.
    */
   private evictCache(): void {
     if (this.audioCache.size === 0) return
@@ -789,22 +968,20 @@ export class SubtitlesDubbingScheduler {
     const nowMs = this.videoElement.currentTime * 1000
     if (Number.isFinite(nowMs)) {
       for (const [key, entry] of this.audioCache) {
-        if (key !== this.currentCueKey && entry.end < nowMs - CACHE_KEEP_BEHIND_MS) {
+        if (key !== this.audioKey(this.currentCueKey ?? "") && entry.end < nowMs - CACHE_KEEP_BEHIND_MS) {
           this.audioCache.delete(key)
         }
       }
     }
 
-    if (
-      this.audioCache.size <= MAX_CACHE_ENTRIES &&
-      this.cacheBytes() <= MAX_CACHE_BYTES
-    ) {
+    if (this.audioCache.size <= MAX_CACHE_ENTRIES && this.cacheBytes() <= MAX_CACHE_BYTES) {
       return
     }
 
+    const currentKey = this.currentCueKey !== null ? this.audioKey(this.currentCueKey) : null
     const evictable = [...this.audioCache.entries()]
-      .filter(([key]) => key !== this.currentCueKey)
-      .sort((a, b) => a[1].end - b[1].end)
+      .filter(([key]) => key !== currentKey)
+      .sort((a, b) => distanceFromPlayhead(b[1], nowMs) - distanceFromPlayhead(a[1], nowMs))
     for (const [key] of evictable) {
       if (this.audioCache.size <= MAX_CACHE_ENTRIES && this.cacheBytes() <= MAX_CACHE_BYTES) {
         break
@@ -821,12 +998,30 @@ export class SubtitlesDubbingScheduler {
     const ttsConfig: TTSConfig = config?.tts ?? ({} as TTSConfig)
     const targetLanguage = config?.language.targetCode
 
+    // Read here rather than per tick: this is the one place that already awaits
+    // the settings, and `prefetchAhead` needs the value synchronously.
+    this.mimoConcurrency = settings.concurrency
+
+    // A changed engine or voice invalidates every cached clip: the old bytes
+    // encode the old sound. Same idea as the read-aloud hook's query key. The
+    // failure records go too — a cue that failed on the old engine deserves a
+    // fresh attempt on the new one rather than a 15-second block.
+    const fingerprint = synthesisFingerprint(ttsConfig, settings)
+    if (fingerprint !== this.synthesisFingerprintCache) {
+      this.synthesisFingerprintCache = fingerprint
+      this.audioCache.clear()
+      this.failedKeys.clear()
+    }
+
     return synthesizeSpeech({
       text,
       ttsConfig,
       settings,
       // Only reached on the Edge path; MiMo uses the voice in `settings`.
+      // Order matches the read-aloud hook's `selectTTSVoice` so a voice the
+      // user mapped per language in settings is what speaks here too.
       resolveEdgeVoice: async () =>
+        (targetLanguage ? ttsConfig.languageVoices?.[targetLanguage] : undefined) ??
         (targetLanguage ? getDefaultTTSVoiceForLanguage(targetLanguage) : undefined) ??
         ttsConfig.defaultVoice ??
         EDGE_TTS_FALLBACK_VOICE,
@@ -866,19 +1061,52 @@ export class SubtitlesDubbingScheduler {
     audio.src = ""
   }
 
+  /**
+   * Synthesized cues still ahead of the playhead that have not been spoken.
+   *
+   * This is the depth of audio ready to play, and the readout the user watches:
+   * a healthy run holds it near the prefetch window, while a value stuck at 0
+   * on a running video means the playhead is outrunning synthesis (a high
+   * playback rate against a slow engine). Cues behind the playhead and cues
+   * already spoken are excluded — neither is "waiting to be played".
+   */
+  private bufferedCount(): number {
+    const timeMs = this.videoElement.currentTime * 1000
+    if (!Number.isFinite(timeMs)) return 0
+    let count = 0
+    for (const entry of this.audioCache.values()) {
+      if (entry.start <= timeMs) continue
+      if (this.completedCueKeys.has(entry.cueIdentity)) continue
+      count++
+    }
+    return count
+  }
+
   private publishState(): void {
     const readyCount = this.audioCache.size
+    const failingSince = this.enabled ? this.failingSince : null
+    const bufferedCount = this.enabled ? this.bufferedCount() : 0
+    const engine = this.enabled ? this.currentEngine() : null
     // A fresh object on every tick made the settings panel re-render a few
     // times a second for a value that changes only when a cue is synthesized or
     // evicted. Only writes that carry new information reach the atom.
     if (
       this.lastPublishedState &&
       this.lastPublishedState.enabled === this.enabled &&
-      this.lastPublishedState.readyCount === readyCount
+      this.lastPublishedState.readyCount === readyCount &&
+      this.lastPublishedState.failingSince === failingSince &&
+      this.lastPublishedState.bufferedCount === bufferedCount &&
+      this.lastPublishedState.engine === engine
     ) {
       return
     }
-    this.lastPublishedState = { enabled: this.enabled, readyCount }
+    this.lastPublishedState = {
+      enabled: this.enabled,
+      readyCount,
+      failingSince,
+      bufferedCount,
+      engine,
+    }
     subtitlesStore.set(dubbingStateAtom, this.lastPublishedState)
   }
 }

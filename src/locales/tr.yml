@@ -1406,6 +1406,9 @@ options:
       audioFormatDescription: MP3 çok daha küçüktür. WAV tam süre taşır, bu yüzden dublaj başlangıcı daha isabetli olur.
       formatMp3: MP3 (daha küçük)
       formatWav: WAV (tam süre)
+      concurrency: Dublaj eşzamanlılığı
+      concurrencyDescription: Önceden seslendirilebilecek altyazı satırı sayısı. 2x veya daha hızlı izlerken dublaj geride kalıyorsa artırın; API istekleri reddetmeye başlarsa azaltın.
+      concurrencyValue: Aynı anda $1
       voiceDesignedValue: Talimattan üretilir
       stylePromptRequired: Ses tasarımı modeli sesi talimattan üretir, bu yüzden bir tane yazın.
       test: Sesi dene
@@ -1679,6 +1682,10 @@ subtitles:
     muteOriginal: Orijinal video sesini kapat
     originalVolume: Orijinal video ses düzeyi
     dubbingVolume: Dublaj ses düzeyi
+    buffered: $1 hazır
+    bufferedHint: "Çalınmayı bekleyen seslendirilmiş satır sayısı. 0'a düşerse sentez oynatma hızına yetişemiyor demektir: hızı düşürün veya dublaj eşzamanlılığını artırın."
+    bufferedHintEdge: Çalınmayı bekleyen seslendirilmiş satır sayısı.
+    failingHint: Dublaj açık ama konuşma sentezi başarısız oluyor. TTS motor ayarlarını kontrol edin.
   actions:
     downloadTranslated: Çevrilmiş altyazıları indir
     downloadTranslatedPreparing: Altyazılar hazırlanıyor, uzun videolar daha uzun sürebilir

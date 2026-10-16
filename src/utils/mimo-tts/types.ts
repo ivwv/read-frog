@@ -37,4 +37,15 @@ export interface MimoTtsSettings {
    */
   stylePrompt: string
   format: MimoTtsFormat
+  /**
+   * How many cues video dubbing may synthesize at once.
+   *
+   * MiMo answers in seconds, so throughput is `concurrency / latency`. A video
+   * watched at 2x-4x consumes cues 2-4x faster, and a fixed budget that is fine
+   * at 1x falls permanently behind above it — the dubbing then skips sentences
+   * rather than merely lagging. Ignored by Edge TTS, whose own (lower) budget is
+   * tuned to stay under its rate limiter, and by read-aloud, which is gated on
+   * playback rather than on synthesis.
+   */
+  concurrency: number
 }
