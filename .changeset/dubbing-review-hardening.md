@@ -9,7 +9,9 @@ fix(subtitles): harden dubbing against ads, voice changes, and engine failures
   the ad ends.
 - Cached dubbing clips are keyed by the synthesis inputs (engine, model, voice,
   style prompt, format), so switching the engine or voice no longer keeps
-  speaking clips synthesized with the old one.
+  speaking clips synthesized with the old one. Audio already synthesized is
+  reused as later translation batches arrive, instead of being discarded and
+  re-requested.
 - The user's per-language voice mapping from the TTS settings is honored by
   dubbing, matching the selection toolbar's read-aloud.
 - MiMo TTS gets a wider synthesis concurrency window than Edge: its round trips
