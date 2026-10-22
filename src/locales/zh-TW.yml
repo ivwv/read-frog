@@ -31,6 +31,9 @@ popup:
     title: 提供商
     description: 為每個功能選擇使用的提供商
     open: 打開提供商設定
+  tabs:
+    page: 網頁
+    text: 文字
   translate: 翻譯
   showOriginal: 顯示原文
   enabledFloatingButton: 啟用懸浮按鈕

@@ -31,6 +31,9 @@ popup:
     title: Providers
     description: Choose which provider to use for each feature
     open: Open provider settings
+  tabs:
+    page: Trang
+    text: Văn bản
   translate: Dịch
   showOriginal: Hiển thị bản gốc
   enabledFloatingButton: Bật nút nổi

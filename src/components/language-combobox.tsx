@@ -40,6 +40,12 @@ interface LanguageComboboxProps<T extends string> {
   placeholder?: string
   /** The trigger's size, as a `Button` variant — `sm` matches the settings selects. */
   triggerSize?: ComponentProps<typeof Button>["size"]
+  /**
+   * Shows the language's own name without its locale, e.g. "英语" instead of
+   * "英语 (English)". For a trigger too narrow to hold the full label — the
+   * popup's tab — where truncating mid-locale reads worse than omitting it.
+   */
+  compact?: boolean
   className?: string
 }
 
@@ -51,6 +57,7 @@ export function LanguageCombobox<T extends string = LangCodeISO6393 | "auto">({
   autoLabel,
   placeholder,
   triggerSize,
+  compact = false,
   className,
 }: LanguageComboboxProps<T>) {
   const languageItems = useMemo(() => {
@@ -61,6 +68,12 @@ export function LanguageCombobox<T extends string = LangCodeISO6393 | "auto">({
     // build for it.
     return getLanguageItems(detectedLangCode, autoLabel) as LanguageItem<T>[]
   }, [items, detectedLangCode, autoLabel])
+
+  /* A compact trigger shows the language name alone: the popup's tab is too narrow
+     for "英语 (English)", and truncating mid-locale reads worse than omitting it.
+     Only the trigger is affected — the list it opens has the room for full labels. */
+  const triggerLabel = (item: LanguageItem<T> | null) =>
+    item ? (compact ? (item.name ?? item.label) : item.label) : undefined
 
   return (
     <Combobox
@@ -88,7 +101,7 @@ export function LanguageCombobox<T extends string = LangCodeISO6393 | "auto">({
           {(item: LanguageItem<T> | null) => (
             <>
               <span className="min-w-0 flex-1 truncate text-left">
-                {item?.label ?? placeholder ?? i18n.t("translationHub.searchLanguages")}
+                {triggerLabel(item) ?? placeholder ?? i18n.t("translationHub.searchLanguages")}
               </span>
               {/* The auto row is named after a real language, so without the badge the
                   trigger reads exactly like that language pinned by hand. */}

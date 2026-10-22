@@ -31,6 +31,9 @@ popup:
     title: Providers
     description: Choose which provider to use for each feature
     open: Open provider settings
+  tabs:
+    page: 페이지
+    text: 텍스트
   translate: 번역
   showOriginal: 원문 보기
   enabledFloatingButton: 플로팅 버튼 활성화

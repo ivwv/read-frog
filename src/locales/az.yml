@@ -31,6 +31,9 @@ popup:
     title: Provayderlər
     description: Hər funksiya üçün istifadə ediləcək provayderi seçin
     open: Provayder parametrlərini aç
+  tabs:
+    page: Səhifə
+    text: Mətn
   translate: Tərcümə et
   showOriginal: Orijinalı göstər
   enabledFloatingButton: Üzən düyməni aktiv et

@@ -27,9 +27,10 @@ import { PROVIDER_ITEMS } from "@/utils/constants/providers"
 import { i18n } from "@/utils/i18n"
 import { getProviderLogo, isSystemProviderSelectorItem } from "@/utils/providers/provider-display"
 import { getSelectableProvidersForCapability } from "@/utils/providers/provider-registry"
+import { cn } from "@/utils/styles/utils"
 import { selectedProviderIdsAtom } from "../atoms"
 
-export function TranslationServiceDropdown() {
+export function TranslationServiceDropdown({ className }: { className?: string } = {}) {
   const { theme } = useTheme()
   const [selectedIds, setSelectedIds] = useAtom(selectedProviderIdsAtom)
   const providersConfig = useAtomValue(configFieldsAtomMap.providersConfig)
@@ -57,9 +58,9 @@ export function TranslationServiceDropdown() {
   const builtInProviders = providerOptions.filter(isSystemProviderSelectorItem)
 
   return (
-    <div className="flex min-w-0 items-center gap-2">
+    <div className={cn("flex min-w-0 items-center gap-2", className)}>
       <Select multiple value={selectedIds} onValueChange={setSelectedIds}>
-        <SelectTrigger className="w-52 min-w-0">
+        <SelectTrigger className="w-52 min-w-0 max-w-full">
           <SelectValue className="min-w-0" placeholder={i18n.t("translateService.selectServices")}>
             {selectedIds.length > 0 ? (
               <div className="flex min-w-0 items-center gap-2">

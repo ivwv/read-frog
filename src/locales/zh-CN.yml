@@ -31,6 +31,9 @@ popup:
     title: 提供商
     description: 为每个功能选择使用的提供商
     open: 打开提供商设置
+  tabs:
+    page: 网页
+    text: 文本
   translate: 翻译
   showOriginal: 显示原文
   enabledFloatingButton: 启用悬浮按钮

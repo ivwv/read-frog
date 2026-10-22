@@ -31,6 +31,9 @@ popup:
     title: Providers
     description: Choose which provider to use for each feature
     open: Open provider settings
+  tabs:
+    page: Sayfa
+    text: Metin
   translate: Çevir
   showOriginal: Orijinali Göster
   enabledFloatingButton: Yüzen butonu etkinleştir

@@ -31,6 +31,9 @@ popup:
     title: Providers
     description: Choose which provider to use for each feature
     open: Open provider settings
+  tabs:
+    page: Страница
+    text: Текст
   translate: Перевести
   showOriginal: Показать оригинал
   enabledFloatingButton: Включить плавающую кнопку

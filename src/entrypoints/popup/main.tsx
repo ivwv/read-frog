@@ -1,6 +1,7 @@
 import "@/utils/zod-config"
 import type { Config } from "@/types/config/config"
 import type { ThemeMode } from "@/types/config/theme"
+import type { PopupTab } from "@/utils/popup/active-tab"
 import { QueryClientProvider } from "@tanstack/react-query"
 import { Provider as JotaiProvider } from "jotai"
 import { useHydrateAtoms } from "jotai/utils"
@@ -20,7 +21,9 @@ import { sendMessage } from "@/utils/message"
 import { renderPersistentReactRoot } from "@/utils/react-root"
 import { queryClient } from "@/utils/tanstack-query"
 import { getLocalThemeMode } from "@/utils/theme"
+import { getPopupActiveTab } from "@/utils/popup/active-tab"
 import App from "./app"
+import { popupActiveTabAtom } from "./atoms/active-tab"
 import {
   getIsInPatterns,
   isCurrentSiteInPatternsAtom,
@@ -48,6 +51,7 @@ function HydrateAtoms({
     [typeof isCurrentSiteInWhitelistAtom, boolean],
     [typeof isCurrentSiteInBlacklistAtom, boolean],
     [typeof baseThemeModeAtom, ThemeMode],
+    [typeof popupActiveTabAtom, PopupTab],
   ]
   children: React.ReactNode
 }) {
@@ -57,15 +61,16 @@ function HydrateAtoms({
 
 async function initApp() {
   const root = document.getElementById("root")!
-  root.className = "text-base antialiased w-[320px] bg-background"
+  root.className = "text-base antialiased w-[360px] bg-background"
 
-  const [configValue, themeMode, activeTab] = await Promise.all([
+  const [configValue, themeMode, activeTab, activePopupTab] = await Promise.all([
     getLocalConfig(),
     getLocalThemeMode(),
     browser.tabs.query({
       active: true,
       currentWindow: true,
     }),
+    getPopupActiveTab(),
   ])
   const config = configValue ?? DEFAULT_CONFIG
 
@@ -106,6 +111,7 @@ async function initApp() {
               [isCurrentSiteInWhitelistAtom, isInWhitelist],
               [isCurrentSiteInBlacklistAtom, isInBlacklist],
               [baseThemeModeAtom, themeMode],
+              [popupActiveTabAtom, activePopupTab],
             ]}
           >
             <ThemeProvider>

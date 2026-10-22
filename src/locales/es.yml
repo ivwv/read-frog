@@ -31,6 +31,9 @@ popup:
     title: Providers
     description: Choose which provider to use for each feature
     open: Open provider settings
+  tabs:
+    page: Página
+    text: Texto
   translate: Traducir
   showOriginal: Mostrar original
   enabledFloatingButton: Activar botón flotante

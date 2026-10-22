@@ -16,7 +16,17 @@ import {
 } from "../atoms"
 import { getHubPromptConfig } from "../prompt"
 
-export function TextInput() {
+interface TextInputProps {
+  /**
+   * The box's own sizing. The hub page wants a tall pane; the popup's tab has a
+   * third of the window and a narrower font, so it passes its own.
+   */
+  className?: string
+  /** Puts the caret in the box on mount — for a surface that exists to be typed into. */
+  autoFocus?: boolean
+}
+
+export function TextInput({ className, autoFocus }: TextInputProps = {}) {
   const [value, setValue] = useAtom(inputTextAtom)
   const sourceLangCode = useAtomValue(sourceLangCodeAtom)
   const targetLangCode = useAtomValue(targetLangCodeAtom)
@@ -66,11 +76,12 @@ export function TextInput() {
   return (
     <div className="relative">
       <Textarea
+        autoFocus={autoFocus}
         value={value}
         onChange={(e) => setValue(e.target.value)}
         onKeyDown={handleKeyDown}
         placeholder={i18n.t("translationHub.inputPlaceholder")}
-        className="h-96 min-h-0 resize-none px-4 pt-3 pb-12 text-lg!"
+        className={cn("h-96 min-h-0 resize-none px-4 pt-3 pb-12 text-lg!", className)}
         style={{ userSelect: "text" }}
       />
 

@@ -31,6 +31,9 @@ popup:
     title: Providers
     description: Choose which provider to use for each feature
     open: Open provider settings
+  tabs:
+    page: ページ
+    text: テキスト
   translate: 翻訳
   showOriginal: 原文を表示
   enabledFloatingButton: フローティングボタンを有効化
