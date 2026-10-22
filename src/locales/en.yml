@@ -1526,7 +1526,7 @@ options:
       title: Speech
       rate:
         title: Rate
-        description: How much faster or slower the voice reads than its own pace, from -100 to 100 percent.
+        description: How fast the voice reads, from 0.1x to 5x its own pace.
       pitch:
         title: Pitch
         description: How much higher or lower the voice speaks than its own pitch, from -100 to 100 hertz.

@@ -22,6 +22,7 @@ import { sendMessage } from "@/utils/message"
 import { getMimoTtsSettings } from "@/utils/mimo-tts/settings"
 import { splitTextByUtf8Bytes } from "@/utils/server/edge-tts/chunk"
 import { evictOldestTtsAudioClips, TTS_AUDIO_QUERY_ROOT } from "@/utils/tts/clip-cache"
+import { getTtsPlaybackRate } from "@/utils/tts/playback-rate"
 import { synthesizeSpeech } from "@/utils/tts/synthesize-speech"
 
 interface PlayAudioParams {
@@ -33,6 +34,13 @@ interface PlayAudioParams {
    * call, and the reported provider all describe the same engine.
    */
   settings: MimoTtsSettings
+  /**
+   * Speed the clip is played at, as a multiplier of the voice's own pace.
+   *
+   * Read once per run beside `settings`: it changes how the audio is heard, not
+   * what the engine produced, so it stays out of the audio cache key.
+   */
+  playbackRate: number
   forcedVoice?: string
   // A run nobody pressed for (a layout reading a field as the answer arrives)
   // fails without a toast; pressing the trigger tries again and reports it.
@@ -160,7 +168,14 @@ export function useTextToSpeech(
     meta: {
       suppressToast: true,
     },
-    mutationFn: async ({ text, ttsConfig, analyticsContext, settings, forcedVoice }) => {
+    mutationFn: async ({
+      text,
+      ttsConfig,
+      analyticsContext,
+      settings,
+      playbackRate,
+      forcedVoice,
+    }) => {
       stop()
       shouldStopRef.current = false
 
@@ -176,6 +191,7 @@ export function useTextToSpeech(
           ttsConfig,
           analyticsContext,
           settings,
+          playbackRate,
           forcedVoice,
         })
       } catch (error) {
@@ -208,7 +224,7 @@ export function useTextToSpeech(
   async function runPlayback(
     requestId: string,
     isSuperseded: () => boolean,
-    { text, ttsConfig, analyticsContext, settings, forcedVoice }: PlayAudioParams,
+    { text, ttsConfig, analyticsContext, settings, playbackRate, forcedVoice }: PlayAudioParams,
   ) {
     let didStartPlayback = false
 
@@ -239,7 +255,7 @@ export function useTextToSpeech(
         text: chunk,
         engine: settings.engine,
         voice: selectedVoice,
-        rate: ttsConfig.rate,
+        playbackRate,
         pitch: ttsConfig.pitch,
         volume: ttsConfig.volume,
       })
@@ -251,12 +267,14 @@ export function useTextToSpeech(
             // Every input that changes the produced bytes belongs in the key.
             // Without the engine and its parameters, switching engines (or
             // voices) would keep serving the cached clip from the old one.
+            // The speed is deliberately absent: it is applied to the audio
+            // element at playback, so it changes how the clip is heard, not
+            // what the engine produced.
             engine: settings.engine,
             voice: selectedVoice,
             model: settings.engine === "mimo" ? settings.model : undefined,
             stylePrompt: settings.engine === "mimo" ? settings.stylePrompt : undefined,
             format: settings.engine === "mimo" ? settings.format : undefined,
-            rate: ttsConfig.rate,
             pitch: ttsConfig.pitch,
             volume: ttsConfig.volume,
           },
@@ -288,6 +306,7 @@ export function useTextToSpeech(
           requestId,
           audioBase64: audioChunk.audioBase64,
           contentType: audioChunk.contentType,
+          playbackRate,
         })
         if (playbackResult.ok) {
           didStartPlayback = true
@@ -349,13 +368,18 @@ export function useTextToSpeech(
     },
   ) => {
     // Read once, here, so the engine that gets reported and the engine that
-    // synthesizes cannot disagree if the setting changes mid-run.
-    const settings = await getMimoTtsSettings()
+    // synthesizes cannot disagree if the setting changes mid-run. The speed is
+    // read beside it for the same reason: one run, one pace.
+    const [settings, playbackRate] = await Promise.all([
+      getMimoTtsSettings(),
+      getTtsPlaybackRate(),
+    ])
 
     return playMutation.mutateAsync({
       text,
       ttsConfig,
       settings,
+      playbackRate,
       forcedVoice: options?.forcedVoice,
       quiet: options?.quiet,
       analyticsContext: {

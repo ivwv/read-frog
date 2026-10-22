@@ -1384,7 +1384,7 @@ options:
       title: Habla
       rate:
         title: Velocidad
-        description: Cuánto más rápido o más lento lee la voz respecto a su propio ritmo, de -100 a 100 por ciento.
+        description: Qué tan rápido lee la voz, de 0,1 a 5 veces su propio ritmo.
       pitch:
         title: Tono
         description: Cuánto más agudo o más grave habla la voz respecto a su propio tono, de -100 a 100 hercios.

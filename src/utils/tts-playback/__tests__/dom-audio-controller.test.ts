@@ -28,6 +28,10 @@ function installFakeAudio() {
     pause = vi.fn<(...args: any[]) => any>()
     removeAttribute = vi.fn<(...args: any[]) => any>()
     load = vi.fn<(...args: any[]) => any>()
+    // The real element defaults to natural speed with pitch correction on; the
+    // controller is expected to leave both alone unless a rate is asked for.
+    playbackRate = 1
+    preservesPitch = true
 
     constructor(readonly src: string) {
       FakeAudio.instances.push(this)
@@ -61,6 +65,41 @@ describe("dom audio playback controller", () => {
     } else {
       delete (URL as { revokeObjectURL?: unknown }).revokeObjectURL
     }
+  })
+
+  it("plays at the requested speed with pitch correction, outside Edge's own 0.5x-2x clamp", async () => {
+    const { FakeAudio } = installFakeAudio()
+    const controller = new DOMAudioPlaybackController("playback failed")
+
+    const playbackPromise = controller.play({
+      requestId: "req-fast",
+      audioBase64: "ZmFrZQ==",
+      contentType: "audio/mpeg",
+      playbackRate: 5,
+    })
+
+    expect(FakeAudio.instances[0]!.playbackRate).toBe(5)
+    // Without correction a slowed reading drops in pitch instead of just slowing.
+    expect(FakeAudio.instances[0]!.preservesPitch).toBe(true)
+
+    FakeAudio.instances[0]!.onended?.()
+    await expect(playbackPromise).resolves.toEqual({ ok: true })
+  })
+
+  it("leaves the element at natural speed when no rate is given", async () => {
+    const { FakeAudio } = installFakeAudio()
+    const controller = new DOMAudioPlaybackController("playback failed")
+
+    const playbackPromise = controller.play({
+      requestId: "req-1",
+      audioBase64: "ZmFrZQ==",
+      contentType: "audio/mpeg",
+    })
+
+    expect(FakeAudio.instances[0]!.playbackRate).toBe(1)
+
+    FakeAudio.instances[0]!.onended?.()
+    await expect(playbackPromise).resolves.toEqual({ ok: true })
   })
 
   it("plays audio and cleans up object URLs after playback ends", async () => {

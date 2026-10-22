@@ -1379,7 +1379,7 @@ options:
       title: Okuma
       rate:
         title: Hız
-        description: Sesin kendi hızına göre ne kadar hızlı ya da yavaş okuduğu, -100 ile 100 yüzde arasında.
+        description: Sesin okuma hızı, kendi temposunun 0,1 ile 5 katı arasında.
       pitch:
         title: Perde
         description: Sesin kendi perdesine göre ne kadar tiz ya da pes konuştuğu, -100 ile 100 hertz arasında.

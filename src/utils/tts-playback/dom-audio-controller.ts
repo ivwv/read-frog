@@ -60,6 +60,15 @@ export class DOMAudioPlaybackController {
 
         this.activePlayback = playback
 
+        /* Speed is a playback concern, not a synthesis one: the clip is always
+           the voice at its own pace, so the whole 0.1x-5x range stays reachable
+           (Edge TTS clamps the prosody rate it is handed). Pitch correction is
+           turned on explicitly, or a slowed reading would drop in pitch. */
+        if (request.playbackRate !== undefined) {
+          audio.preservesPitch = true
+          audio.playbackRate = request.playbackRate
+        }
+
         audio.onended = () => {
           this.settlePlayback(playback!, { ok: true })
         }

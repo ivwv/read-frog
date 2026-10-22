@@ -64,7 +64,11 @@ export async function synthesizeSpeech({
   const response = await sendMessage("edgeTtsSynthesize", {
     text,
     voice,
-    rate: toSignedValue(ttsConfig.rate ?? 0, "%"),
+    // Natural pace on purpose: the reader's speed is applied to the audio at
+    // playback (see `TTSPlaybackStartRequest.playbackRate`), because Edge TTS
+    // silently clamps the prosody rate to about 0.5x-2x — sending a percentage
+    // here would cap the setting at 2x and quietly disagree with the UI.
+    rate: "+0%",
     pitch: toSignedValue(ttsConfig.pitch ?? 0, "Hz"),
     volume: toSignedValue(ttsConfig.volume ?? 0, "%"),
   })

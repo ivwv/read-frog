@@ -62,7 +62,7 @@ describe("synthesizeSpeech", () => {
     expect(result).toEqual({ audioBase64: "AAA", contentType: "audio/mpeg" })
   })
 
-  it("routes to Edge TTS with the signed prosody values when MiMo is off", async () => {
+  it("routes to Edge TTS at natural pace, leaving only pitch and volume on the SSML", async () => {
     sendMessage.mockResolvedValue({ ok: true, audioBase64: "BBB", contentType: "audio/mpeg" })
     const edgeVoice = resolveEdgeVoice()
 
@@ -74,10 +74,13 @@ describe("synthesizeSpeech", () => {
     })
 
     expect(edgeVoice).toHaveBeenCalled()
+    // Speed is applied to the audio element at playback instead: Edge TTS clamps
+    // the prosody rate it is handed to roughly 0.5x-2x, so a percentage here
+    // could never reach the 5x the settings page offers.
     expect(sendMessage).toHaveBeenCalledWith("edgeTtsSynthesize", {
       text: "hello",
       voice: "en-US-JennyNeural",
-      rate: "+10%",
+      rate: "+0%",
       pitch: "-5Hz",
       volume: "+0%",
     })

@@ -1389,7 +1389,7 @@ options:
       title: 朗读
       rate:
         title: 语速
-        description: 相对语音本身的语速快多少或慢多少，取值 -100 到 100 个百分点。
+        description: 朗读速度，为语音本身语速的 0.1 倍到 5 倍。
       pitch:
         title: 音高
         description: 相对语音本身的音高高多少或低多少，取值 -100 到 100 赫兹。

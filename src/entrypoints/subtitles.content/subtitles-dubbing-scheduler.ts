@@ -159,7 +159,11 @@ function synthesisFingerprint(config: TTSConfig | null, settings: MimoTtsSetting
       settings.format,
     ].join("\0")
   }
-  return ["edge", config?.rate ?? 0, config?.pitch ?? 0, config?.volume ?? 0].join("\0")
+  // The speaking speed is absent on purpose: it is applied to the audio element
+  // at playback, not to synthesis. Dubbing never applies it anyway — its rate
+  // loop owns `playbackRate`, aiming each sentence at the cue window — so the
+  // clip the engine returns is the same at any speed setting.
+  return ["edge", config?.pitch ?? 0, config?.volume ?? 0].join("\0")
 }
 
 /**

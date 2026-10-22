@@ -1379,7 +1379,7 @@ options:
       title: 읽어 주기
       rate:
         title: 속도
-        description: 음성 본래의 속도보다 얼마나 빠르거나 느리게 읽을지, -100에서 100 퍼센트.
+        description: 읽기 속도. 음성 본래 속도의 0.1배에서 5배.
       pitch:
         title: 피치
         description: 음성 본래의 피치보다 얼마나 높거나 낮게 말할지, -100에서 100 헤르츠.

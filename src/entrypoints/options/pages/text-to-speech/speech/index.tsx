@@ -1,24 +1,28 @@
 import { useAtom } from "jotai"
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { Input } from "@/components/ui/base-ui/input"
+import { SliderComfortable } from "@/components/ui/base-ui/slider"
 import { toastManager } from "@/components/ui/base-ui/toast"
 import {
   MAX_TTS_PITCH,
-  MAX_TTS_RATE,
   MAX_TTS_VOLUME,
   MIN_TTS_PITCH,
-  MIN_TTS_RATE,
   MIN_TTS_VOLUME,
   ttsPitchSchema,
-  ttsRateSchema,
   ttsVolumeSchema,
 } from "@/types/config/tts"
 import { configFieldsAtomMap } from "@/utils/atoms/config"
 import { i18n } from "@/utils/i18n"
+import {
+  getTtsPlaybackRate,
+  MAX_TTS_PLAYBACK_RATE,
+  MIN_TTS_PLAYBACK_RATE,
+  saveTtsPlaybackRate,
+} from "@/utils/tts/playback-rate"
 import { ConfigItem } from "../../../components/config-item"
 import { ConfigSection } from "../../../components/config-section"
 
-/** How the chosen voice delivers a line — three dials, each an offset from how it speaks alone. */
+/** How the chosen voice delivers a line — the speed of playback, then two dials on the voice itself. */
 export function SpeechSection() {
   const [ttsConfig, setTtsConfig] = useAtom(configFieldsAtomMap.tts)
 
@@ -29,15 +33,7 @@ export function SpeechSection() {
         title={i18n.t("options.tts.speech.rate.title")}
         description={i18n.t("options.tts.speech.rate.description")}
       >
-        <SpeechDialInput
-          value={ttsConfig.rate}
-          min={MIN_TTS_RATE}
-          max={MAX_TTS_RATE}
-          schema={ttsRateSchema}
-          onValue={(rate) => {
-            void setTtsConfig({ rate })
-          }}
-        />
+        <SpeechRateSlider />
       </ConfigItem>
       <ConfigItem
         id="tts-pitch"
@@ -74,6 +70,48 @@ export function SpeechSection() {
 }
 
 /**
+ * Speed is a multiplier of the voice's own pace, applied to the audio element at playback.
+ *
+ * Dragging is continuous but the write is not, so the thumb follows a local draft and only the
+ * released value is stored. The width is fixed: a slider that stretched with the control column
+ * would read a different multiplier per point at every window size.
+ */
+function SpeechRateSlider() {
+  const [rate, setRate] = useState<number | null>(null)
+
+  useEffect(() => {
+    let active = true
+    void getTtsPlaybackRate().then((stored) => {
+      if (active) setRate(stored)
+    })
+    return () => {
+      active = false
+    }
+  }, [])
+
+  if (rate === null) return null
+
+  return (
+    <div className="w-56">
+      <SliderComfortable
+        variant="scrubber"
+        aria-label={i18n.t("options.tts.speech.rate.title")}
+        min={MIN_TTS_PLAYBACK_RATE}
+        max={MAX_TTS_PLAYBACK_RATE}
+        step={0.1}
+        value={rate}
+        onChange={setRate}
+        onCommit={(next) => {
+          setRate(next)
+          void saveTtsPlaybackRate(next)
+        }}
+        formatValue={(value) => `${Number(value.toFixed(1))}x`}
+      />
+    </div>
+  )
+}
+
+/**
  * Every dial takes a minus sign, so the draft is only judged once the field is left — reporting
  * mid-entry would fire on the "-" the reader is still typing a number after.
  */
@@ -87,7 +125,7 @@ function SpeechDialInput({
   value: number
   min: number
   max: number
-  schema: typeof ttsRateSchema
+  schema: typeof ttsPitchSchema
   onValue: (value: number) => void
 }) {
   const [draftValue, setDraftValue] = useState(String(value))

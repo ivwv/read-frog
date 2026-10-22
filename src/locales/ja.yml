@@ -1379,7 +1379,7 @@ options:
       title: 読み上げ
       rate:
         title: 速度
-        description: ボイス本来の速さからどれだけ速く、または遅く読むか。-100 から 100 パーセント。
+        description: 読み上げの速さ。ボイス本来の速さの 0.1 倍から 5 倍。
       pitch:
         title: ピッチ
         description: ボイス本来のピッチからどれだけ高く、または低く話すか。-100 から 100 ヘルツ。

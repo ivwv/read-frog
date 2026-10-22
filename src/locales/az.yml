@@ -1384,7 +1384,7 @@ options:
       title: Nitq
       rate:
         title: Sürət
-        description: Səsləndirmənin normal tempdən nə qədər sürətli və ya yavaş olacağını -100 ilə 100 faiz arasında təyin edin.
+        description: Oxuma sürəti, səsin öz tempinin 0,1 ilə 5 qatı arasında.
       pitch:
         title: Səsin yüksəkliyi
         description: Səsin normal tonundan nə qədər yüksək və ya alçaq olacağını -100 ilə 100 hers arasında təyin edin.

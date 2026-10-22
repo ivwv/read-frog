@@ -1379,7 +1379,7 @@ options:
       title: Đọc to
       rate:
         title: Tốc độ
-        description: Giọng đọc nhanh hay chậm hơn nhịp vốn có của nó bao nhiêu, từ -100 đến 100 phần trăm.
+        description: Tốc độ đọc, từ 0,1 đến 5 lần nhịp vốn có của giọng.
       pitch:
         title: Cao độ
         description: Giọng nói cao hay thấp hơn cao độ vốn có của nó bao nhiêu, từ -100 đến 100 Hz.
