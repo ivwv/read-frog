@@ -160,6 +160,8 @@ options:
       resetsAt: "$1 重置"
       daily: 每日額度
       weekly: 每週額度
+      oneTime: 贈送額度
+      expiresAt: "$1 到期"
       features:
         pageTranslation: 網頁翻譯
         customAction: 自訂 AI 指令
@@ -823,16 +825,16 @@ options:
           schemaErrorDescription: 請稍後再試一次重新整理。
           schemaLoading: 正在載入筆記庫 schema…
           mappingsLabel: 欄位對應
-          mappingsEmpty: 尚未建立對應，準備好後即可新增。
-          addMappingAction: 新增對應
-          removeMappingAction: 移除對應
           localFieldLabel: 指令欄位
-          localFieldPlaceholder: 選擇一個指令欄位
           remoteFieldLabel: 筆記庫欄位
-          remoteFieldPlaceholder: 選擇一個筆記庫欄位
           columnUnavailableOption: 已刪除
           invalidMappingsTitle: 有些對應需要處理
           invalidMappingsDescription: 無效對應會被保留。儲存到筆記庫前請先修復它們。
+          noFieldSavedTitle: "沒有欄位會存進這個筆記庫"
+          noFieldSavedDescription: "至少為一個欄位選擇筆記庫欄位，才能儲存筆記。"
+          mappingSummary: "存 $1 · 不存 $2 · 待定 $3"
+          skipFieldOption: "不儲存"
+          undecidedFieldPlaceholder: "選擇筆記庫欄位或不儲存"
           mappingMissingLocal: 對應的指令欄位已不存在。
           mappingMissingRemote: 對應的筆記庫欄位已不存在。
           mappingMissingSchema: 重新整理筆記庫 schema 後才能驗證這個對應。
@@ -1617,6 +1619,10 @@ action:
   saveToNotebaseLimitExceeded: 需要升級後才能儲存更多筆記庫內容
   saveToNotebaseTableUnavailable: 所選筆記庫已無法使用
   saveToNotebaseConnectionInvalid: 目前的筆記庫連線已過期，請到自訂 AI 指令重新整理並修復對應
+  saveToNotebaseInvalidContent: "AI 回傳的內容格式不對，沒有儲存。請重新執行一次再儲存。"
+  saveToNotebaseNoFieldSaved: "沒有儲存：這個指令沒有要存進筆記庫的欄位，請在設定中至少選一個。"
+  saveToNotebaseUndecidedTitle: "已儲存。這些欄位還沒決定存不存"
+  saveToNotebaseSkipUndecided: "都不儲存"
   saveToNotebaseNoMappings: 至少新增一個有效對應後才能儲存
   saveToNotebaseCreateTitle: 建立筆記庫？
   saveToNotebaseCreateDescription: 建立一個筆記庫，欄位會對應此自訂 AI 指令的輸出欄位，並將目前結果儲存為第一則筆記。
@@ -1740,11 +1746,13 @@ subtitles:
     translatedExportIncomplete: 未能翻譯所有字幕行
     translatedExportSameLanguage: 來源語言和目標語言相同
 hostedAi:
-  ultraBadge:
-    tooltip: 需開通 Ultra 方案 · 點擊徽章獲取方案
+  planBadge:
+    pro: 需開通 Pro 或 Ultra 方案 · 點擊徽章獲取方案
+    ultra: 需開通 Ultra 方案 · 點擊徽章獲取方案
   availability:
     authenticationRequired: 登入後可使用
     ultraRequired: 需要 Ultra 方案
+    proRequired: 需要 Pro 或 Ultra 方案
     quotaExhausted: 額度已用完
     serviceUnavailable: 暫時無法使用
     usedPercent: "額度已使用 $1%"

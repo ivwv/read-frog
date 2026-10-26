@@ -160,6 +160,8 @@ options:
       resetsAt: "Đặt lại lúc $1"
       daily: Hạn mức mỗi ngày
       weekly: Hạn mức mỗi tuần
+      oneTime: Hạn mức tặng
+      expiresAt: "Hết hạn lúc $1"
       features:
         pageTranslation: Dịch trang
         customAction: Hành động AI tùy chỉnh
@@ -817,16 +819,16 @@ options:
           schemaErrorDescription: Hãy thử làm mới lại sau ít phút nữa.
           schemaLoading: Đang tải schema notebase...
           mappingsLabel: Ánh xạ trường
-          mappingsEmpty: Chưa có ánh xạ nào. Hãy thêm một ánh xạ khi bạn sẵn sàng lưu các trường.
-          addMappingAction: Thêm ánh xạ
-          removeMappingAction: Xóa ánh xạ
           localFieldLabel: Trường của hành động
-          localFieldPlaceholder: Chọn một trường của hành động
           remoteFieldLabel: Trường Notebase
-          remoteFieldPlaceholder: Chọn một trường notebase
           columnUnavailableOption: đã xóa
           invalidMappingsTitle: Một số ánh xạ cần được xử lý
           invalidMappingsDescription: Các ánh xạ không hợp lệ vẫn được giữ lại. Hãy sửa chúng trước khi lưu vào Notebase.
+          noFieldSavedTitle: "Không có trường nào được lưu vào Notebase này"
+          noFieldSavedDescription: "Hãy chọn trường Notebase cho ít nhất một trường để lưu ghi chú."
+          mappingSummary: "Lưu $1 · Bỏ qua $2 · Chưa quyết định $3"
+          skipFieldOption: "Không lưu"
+          undecidedFieldPlaceholder: "Chọn một trường Notebase hoặc không lưu"
           mappingMissingLocal: Trường của hành động đã ánh xạ không còn tồn tại.
           mappingMissingRemote: Trường notebase đã ánh xạ không còn tồn tại.
           mappingMissingSchema: Hãy làm mới schema notebase để xác thực ánh xạ này.
@@ -1607,6 +1609,10 @@ action:
   saveToNotebaseLimitExceeded: Cần nâng cấp để lưu thêm ghi chú Notebase
   saveToNotebaseTableUnavailable: Notebase đã chọn không còn khả dụng
   saveToNotebaseConnectionInvalid: Kết nối Notebase này đã lỗi thời. Hãy làm mới trong Custom AI Actions và sửa các ánh xạ.
+  saveToNotebaseInvalidContent: "Câu trả lời của AI có giá trị sai định dạng nên chưa được lưu. Hãy chạy lại thao tác rồi lưu."
+  saveToNotebaseNoFieldSaved: "Chưa lưu: thao tác này không lưu trường nào vào Notebase. Hãy chọn ít nhất một trường trong phần cài đặt."
+  saveToNotebaseUndecidedTitle: "Đã lưu. Bạn chưa quyết định có lưu các trường này không"
+  saveToNotebaseSkipUndecided: "Không lưu các trường này"
   saveToNotebaseNoMappings: Hãy thêm ít nhất một ánh xạ hợp lệ trước khi lưu
   saveToNotebaseCreateTitle: Tạo Notebase?
   saveToNotebaseCreateDescription: Tạo một Notebase có các cột khớp với Custom Action này, rồi lưu kết quả hiện tại làm ghi chú đầu tiên.
@@ -1730,11 +1736,13 @@ subtitles:
     translatedExportIncomplete: Không thể dịch tất cả các dòng phụ đề
     translatedExportSameLanguage: Ngôn ngữ nguồn và ngôn ngữ đích giống nhau
 hostedAi:
-  ultraBadge:
-    tooltip: Yêu cầu gói Ultra · Nhấp vào huy hiệu để nhận gói
+  planBadge:
+    pro: Yêu cầu gói Pro hoặc Ultra · Nhấp vào huy hiệu để nhận gói
+    ultra: Yêu cầu gói Ultra · Nhấp vào huy hiệu để nhận gói
   availability:
     authenticationRequired: Đăng nhập để sử dụng nhà cung cấp này
     ultraRequired: Yêu cầu gói Ultra
+    proRequired: Yêu cầu gói Pro hoặc Ultra
     quotaExhausted: Đã hết hạn mức
     serviceUnavailable: Tạm thời không khả dụng
     usedPercent: "Đã dùng hạn mức: $1%"

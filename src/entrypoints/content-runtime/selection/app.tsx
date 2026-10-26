@@ -2,11 +2,11 @@ import { useAtomValue } from "jotai"
 import { useEffect } from "react"
 import { ToastProvider } from "@/components/ui/base-ui/toast"
 import { configFieldsAtomMap } from "@/utils/atoms/config"
-import { useInputTranslation } from "./input-translation"
 import {
   SELECTION_CONTENT_OVERLAY_LAYERS,
   SELECTION_CONTENT_OVERLAY_ROOT_ATTRIBUTE,
-} from "./overlay-layers"
+} from "@/utils/constants/selection-overlay-layers"
+import { useInputTranslation } from "./input-translation"
 import { SelectionToolbar } from "./selection-toolbar"
 import { SelectionCustomActionProvider } from "./selection-toolbar/custom-action-button/provider"
 import { SelectionSpeechProvider } from "./selection-toolbar/speak-button"
@@ -32,6 +32,11 @@ export default function App({
     }
   }, [opacity, uiContainer])
 
+  // The content runtime's one corner-toast surface. Its parts share one module
+  // instance, so one `toastManager`, and each ToastProvider would render every
+  // toast: page translation and the floating button raise theirs here too.
+  // This UI runs in the top frame with every part and in each iframe that gets
+  // the toolbar, and a click on a toast in its overlay root keeps the toolbar open.
   return (
     <ToastProvider
       portalProps={{ container: portalContainer }}

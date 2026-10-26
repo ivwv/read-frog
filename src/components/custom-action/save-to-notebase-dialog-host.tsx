@@ -15,11 +15,11 @@ import {
   DialogTitle,
 } from "@/components/ui/base-ui/dialog"
 import { toastManager } from "@/components/ui/base-ui/toast"
-import { SELECTION_CONTENT_OVERLAY_LAYERS } from "@/entrypoints/selection.content/overlay-layers"
 import { env } from "@/env"
 import { classifyFailureReason } from "@/utils/analytics-failure-reason"
 import { configFieldsAtomMap } from "@/utils/atoms/config"
 import { authClient } from "@/utils/auth/auth-client"
+import { SELECTION_CONTENT_OVERLAY_LAYERS } from "@/utils/constants/selection-overlay-layers"
 import { patchSelectionToolbarAction } from "@/utils/custom-actions"
 import { i18n } from "@/utils/i18n"
 import { logger } from "@/utils/logger"
@@ -229,10 +229,12 @@ export function SaveToNotebaseDialogHost() {
         return
       }
 
+      // The Notebase was just created from the action, so a rejected cell is
+      // the answer's value, not the connection.
       if (isORPCValidationError(error)) {
         toastManager.add({
           type: "error",
-          title: i18n.t("action.saveToNotebaseConnectionInvalid"),
+          title: i18n.t("action.saveToNotebaseInvalidContent"),
         })
         return
       }
