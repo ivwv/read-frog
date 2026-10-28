@@ -256,7 +256,7 @@ options:
         customChatComplete: カスタム Chat Complete
         customResponses: カスタム Responses
       attribution:
-        builtInAi: Read Frog がホストする標準モデル。Ultra 以外のユーザーはカスタム AI アクションでのみ利用でき、Ultra ユーザーはより多くの機能で利用できます。
+        builtInAi: Read Frog がホストする標準モデル。Pro と Ultra のユーザーは週間クォータの範囲ですべての機能で利用でき、無料プランではカスタム AI アクションでのみ利用できます。
         builtInAiAdvance: Read Frog がホストする高性能モデルで、Ultra メンバー専用です。ページ翻訳やカスタム AI アクションなど、すべての組み込み AI 機能で利用でき、週間クォータを共有します。標準モデルよりクォータの消費が速くなります。
       description:
         openai: GPT-4oなどのモデルを提供
@@ -1432,6 +1432,9 @@ options:
       aiSegmentation:
         title: AI スマート区切り
         description: AI が字幕を文単位に切り直します。翻訳の応答が遅くなります。高性能な LLM が必要です。性能の低いモデルでは字幕の欠落やずれが起きることがあります。
+      wordLookupAction:
+        title: 単語クリック時のアクション
+        description: 字幕の単語をクリックしたときに実行する AI アクション。既定は辞書で、自分のアクションにも変更できます。
     aiQuota:
       title: AI字幕の利用枠
       description: AIの音声認識で、どんな動画にも正確な字幕を生成します

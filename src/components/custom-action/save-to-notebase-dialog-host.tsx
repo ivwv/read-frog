@@ -41,6 +41,7 @@ import {
   buildNotebaseCreateInputFromPending,
   getNotebaseDetailUrl,
   getPendingNotebaseSaveContext,
+  getPendingNoteSaveAnalyticsSurface,
   setPendingNotebaseSave,
 } from "@/utils/notebase/pending-save"
 import { orpc, orpcClient } from "@/utils/orpc/client"
@@ -134,6 +135,7 @@ export function SaveToNotebaseDialogHost() {
 
     const context = getPendingNotebaseSaveContext(pendingCreateSave)
     trackNoteSaveCompleted({
+      surface: getPendingNoteSaveAnalyticsSurface(pendingCreateSave),
       saveSource: context.surface,
       isGuide: context.isGuide,
       noteCount: pendingCreateSave.rows.length,
@@ -354,9 +356,9 @@ export function SaveToNotebaseDialogHost() {
     >
       <DialogContent
         container={shadowWrapper ?? document.body}
-        className={`${SELECTION_CONTENT_OVERLAY_LAYERS.popoverOverlay} sm:max-w-lg`}
+        className={`${SELECTION_CONTENT_OVERLAY_LAYERS.popoverOverlay} pointer-events-auto sm:max-w-lg`}
         forceRenderOverlay
-        overlayClassName={SELECTION_CONTENT_OVERLAY_LAYERS.popoverOverlay}
+        overlayClassName={`${SELECTION_CONTENT_OVERLAY_LAYERS.popoverOverlay} pointer-events-auto`}
         showCloseButton={false}
       >
         <DialogHeader>

@@ -1,6 +1,7 @@
 import type { ControlsConfig, PlatformConfig } from "@/entrypoints/subtitles.content/platforms"
 import type { FeatureUsageContext, SurfaceByFeature } from "@/types/analytics"
 import type { Config } from "@/types/config/config"
+import type { SubtitlesPlatform } from "@/types/config/subtitles"
 import type { SubtitlesSource } from "@/utils/constants/subtitles"
 import type { SubtitlesFetcher } from "@/utils/subtitles/fetchers/types"
 import type { SubtitlesVideoContext } from "@/utils/subtitles/processor/translator"
@@ -25,7 +26,7 @@ import { i18n } from "@/utils/i18n"
 import { canProviderRefGenerateText } from "@/utils/providers/provider-ref"
 import { resolveProviderRefForCapability } from "@/utils/providers/provider-registry"
 import { removeReactShadowHost } from "@/utils/react-shadow-host/create-shadow-host"
-import { OverlaySubtitlesError, ToastSubtitlesError } from "@/utils/subtitles/errors"
+import { NoSubtitlesError, ToastSubtitlesError } from "@/utils/subtitles/errors"
 import { optimizeSubtitles } from "@/utils/subtitles/processor/optimizer"
 import {
   buildSubtitlesSummaryContextHash,
@@ -40,6 +41,7 @@ import {
   adPlayingAtom,
   currentTimeMsAtom,
   currentVideoIdAtom,
+  sourceLanguageAtom,
   sourceTrackAtom,
   translatedTrackAtom,
   videoSummaryPartialAtom,
@@ -51,6 +53,7 @@ import {
   subtitlesStore,
   subtitlesVisibleAtom,
 } from "./atoms"
+import { lookUpAtom } from "./learning/atoms"
 import { renderSubtitlesTranslateButton } from "./renderer/render-translate-button"
 import { SegmentationPipeline } from "./segmentation-pipeline"
 import { SubtitlesDubbingScheduler } from "./subtitles-dubbing-scheduler"
@@ -65,6 +68,18 @@ const TOGGLE_SOURCE_SURFACE: Record<SubtitlesToggleSource, SurfaceByFeature["vid
   manual: ANALYTICS_SURFACE.VIDEO_SUBTITLES,
   auto: ANALYTICS_SURFACE.VIDEO_SUBTITLES_AUTO,
   shortcut: ANALYTICS_SURFACE.SHORTCUT,
+}
+
+/**
+ * Sites where most videos have no captions: auto-start on one of those leaves
+ * no loading pill or error behind, and the toggle falls back to off.
+ */
+const QUIET_AUTO_START_PLATFORMS: ReadonlySet<SubtitlesPlatform> = new Set(["xcom"])
+
+interface SubtitlesStartOptions {
+  analyticsContext?: FeatureUsageContext<"video_subtitles">
+  /** Stay silent when the video has no subtitles; see `QUIET_AUTO_START_PLATFORMS`. */
+  quiet?: boolean
 }
 
 type SubtitlesFetcherFactories = {
@@ -87,6 +102,7 @@ export interface SubtitlesProvidersAdapter {
   hasSubtitlesAvailable: () => Promise<boolean>
   ensureSourceTrackPublished: () => Promise<void>
   seekTo: (seconds: number) => void
+  getVideoElement: () => HTMLVideoElement | null
   toggleSubtitlesManually: (enabled: boolean) => void
   toggleSubtitlesByShortcut: (enabled: boolean) => void
   requestAiSubtitles: () => Promise<void>
@@ -317,6 +333,8 @@ export class UniversalVideoAdapter implements SubtitlesProvidersAdapter {
     }
   }
 
+  getVideoElement = () => this.subtitlesScheduler?.getVideoElement() ?? null
+
   downloadSourceSubtitles = async () => {
     await this.getOrLoadSourceSubtitles()
 
@@ -445,13 +463,13 @@ export class UniversalVideoAdapter implements SubtitlesProvidersAdapter {
       assertCurrent()
     }
     if (!hasSubtitles) {
-      throw new OverlaySubtitlesError(i18n.t("subtitles.errors.noSubtitlesFound"))
+      throw new NoSubtitlesError()
     }
 
     const subtitles = await fetcher.fetch()
     assertCurrent()
     if (subtitles.length === 0) {
-      throw new OverlaySubtitlesError(i18n.t("subtitles.errors.noSubtitlesFound"))
+      throw new NoSubtitlesError()
     }
 
     this.sourceVideoId = currentVideoId
@@ -707,23 +725,21 @@ export class UniversalVideoAdapter implements SubtitlesProvidersAdapter {
   }
 
   private toggleSubtitlesWithSource(enabled: boolean, source: SubtitlesToggleSource) {
-    this.handleToggleSubtitles(
-      enabled,
-      enabled
+    this.handleToggleSubtitles(enabled, {
+      analyticsContext: enabled
         ? createFeatureUsageContext(
             ANALYTICS_FEATURE.VIDEO_SUBTITLES,
             TOGGLE_SOURCE_SURFACE[source],
           )
         : undefined,
-    )
+      // Only an automatic start goes quiet: a reader who asked still hears why nothing came.
+      quiet: source === "auto" && QUIET_AUTO_START_PLATFORMS.has(this.config.platform),
+    })
   }
 
-  private handleToggleSubtitles(
-    enabled: boolean,
-    analyticsContext?: FeatureUsageContext<"video_subtitles">,
-  ) {
+  private handleToggleSubtitles(enabled: boolean, options: SubtitlesStartOptions = {}) {
     if (enabled) {
-      void this.switchSubtitlesFetcher(SUBTITLES_SOURCE.NATIVE, analyticsContext)
+      void this.switchSubtitlesFetcher(SUBTITLES_SOURCE.NATIVE, options)
     } else {
       this.subtitlesScheduler?.hide()
       this.showNativeSubtitles()
@@ -760,7 +776,7 @@ export class UniversalVideoAdapter implements SubtitlesProvidersAdapter {
 
   private async switchSubtitlesFetcher(
     next: SubtitlesSource,
-    analyticsContext?: FeatureUsageContext<"video_subtitles">,
+    options: SubtitlesStartOptions = {},
   ): Promise<void> {
     const make = this.fetchers[next]
     if (!make || this.destroyed) {
@@ -794,7 +810,7 @@ export class UniversalVideoAdapter implements SubtitlesProvidersAdapter {
       this.subtitlesScheduler?.setState("loading", { message })
     }
 
-    const succeeded = await this.startTranslation(analyticsContext)
+    const succeeded = await this.startTranslation(options)
     if (operationId !== this.switchOperationId) {
       return
     }
@@ -874,6 +890,8 @@ export class UniversalVideoAdapter implements SubtitlesProvidersAdapter {
   }
 
   private showNativeSubtitles() {
+    // Our subtitles step aside, and a word lookup on them goes too.
+    subtitlesStore.set(lookUpAtom, null)
     this.fetcher.showNativeSubtitles?.()
     if (!this.isNativeSubtitlesHidden) {
       return
@@ -909,7 +927,7 @@ export class UniversalVideoAdapter implements SubtitlesProvidersAdapter {
     this.isNativeSubtitlesHidden = true
   }
 
-  private async startTranslation(analyticsContext?: FeatureUsageContext<"video_subtitles">) {
+  private async startTranslation({ analyticsContext, quiet = false }: SubtitlesStartOptions = {}) {
     let providerAnalytics = UNKNOWN_FEATURE_PROVIDER
     let targetLanguage: Config["language"]["targetCode"] | undefined
     const operationId = this.switchOperationId
@@ -968,7 +986,10 @@ export class UniversalVideoAdapter implements SubtitlesProvidersAdapter {
       this.sessionVideoId = currentVideoId
       this.subtitlesScheduler?.reset()
 
-      this.subtitlesScheduler?.setState("loading", { message: LOADING_MESSAGE[this.source] })
+      // A quiet start stays invisible until there is something to show.
+      if (!quiet) {
+        this.subtitlesScheduler?.setState("loading", { message: LOADING_MESSAGE[this.source] })
+      }
 
       loadingSource = true
       await this.getOrLoadSourceSubtitles()
@@ -991,6 +1012,15 @@ export class UniversalVideoAdapter implements SubtitlesProvidersAdapter {
       }
       return true
     } catch (error) {
+      // Not a failure: the video simply has none. Skipping analytics too, since
+      // on a quiet site this is most videos and nothing actually ran.
+      if (quiet && error instanceof NoSubtitlesError) {
+        if (operationId === this.switchOperationId) {
+          this.handleToggleSubtitles(false)
+        }
+        return false
+      }
+
       if (analyticsContext && targetLanguage) {
         void trackFeatureUsed({
           ...analyticsContext,
@@ -1078,6 +1108,10 @@ export class UniversalVideoAdapter implements SubtitlesProvidersAdapter {
       subtitlesStore.set(currentTimeMsAtom, video.currentTime * 1000)
     }
     subtitlesStore.set(sourceTrackAtom, [...fragments])
+    subtitlesStore.set(
+      sourceLanguageAtom,
+      resolveLanguageCodeFromLocale(this.fetcher.getSourceLanguage()),
+    )
   }
 
   private replaceSourceTrackWindow(

@@ -257,7 +257,7 @@ options:
         customChatComplete: Personalizado Chat Complete
         customResponses: Personalizado Responses
       attribution:
-        builtInAi: Modelo estándar alojado por Read Frog. Los usuarios sin Ultra solo pueden usarlo en las acciones de IA personalizadas; los usuarios Ultra pueden usarlo en más funciones.
+        builtInAi: Modelo estándar alojado por Read Frog. Los usuarios Pro y Ultra pueden usarlo en todas las funciones con una cuota semanal; en el plan gratuito solo funciona en las acciones de IA personalizadas.
         builtInAiAdvance: Modelo avanzado alojado por Read Frog, exclusivo para miembros Ultra. Funciona en todas las funciones de IA integrada — traducción de página, acciones de IA personalizadas y más — con una cuota semanal compartida. Consume la cuota más rápido que el modelo estándar.
       description:
         openai: Proporciona modelos como GPT-4o
@@ -1437,6 +1437,9 @@ options:
       aiSegmentation:
         title: Segmentación inteligente de IA
         description: La IA vuelve a cortar los subtítulos en frases. Las traducciones tardan más. Requiere un LLM potente; los modelos más débiles pueden omitir o desalinear líneas.
+      wordLookupAction:
+        title: Acción al buscar una palabra
+        description: La acción de IA que responde al hacer clic en una palabra de los subtítulos. Diccionario, salvo que elijas una tuya.
     aiQuota:
       title: Cuota de subtítulos con IA
       description: El reconocimiento de voz con IA te da subtítulos precisos para cualquier vídeo

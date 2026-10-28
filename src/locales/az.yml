@@ -257,7 +257,7 @@ options:
         customChatComplete: Fərdi Chat Complete
         customResponses: Fərdi Responses
       attribution:
-        builtInAi: Read Frog serverlərində işləyən standart model. Ultra abunəliyi olmayan istifadəçilər ondan yalnız fərdi süni intellekt əməliyyatlarında, Ultra üzvləri isə daha çox funksiyada istifadə edə bilər.
+        builtInAi: Read Frog serverlərində işləyən standart model. Pro və Ultra üzvləri ondan həftəlik kvota ilə bütün funksiyalarda istifadə edə bilər; pulsuz planda isə yalnız fərdi süni intellekt əməliyyatlarında işləyir.
         builtInAiAdvance: Yalnız Ultra üzvləri üçün Read Frog serverlərində işləyən təkmil model. Səhifə tərcüməsini, fərdi süni intellekt əməliyyatlarını və bütün digər daxili süni intellekt funksiyalarını ortaq həftəlik kvota ilə icra edir. Kvotanı standart modeldən daha sürətli sərf edir.
       description:
         openai: GPT-4o kimi modellər təqdim edir
@@ -1437,6 +1437,9 @@ options:
       aiSegmentation:
         title: Süni intellektlə ağıllı seqmentləşdirmə
         description: Süni intellekt subtitrləri cümlələrə yenidən bölür. Tərcümələr daha gec gəlir. Güclü LLM tələb olunur; zəif modellər sətirləri buraxa və ya sürüşdürə bilər.
+      wordLookupAction:
+        title: Söz axtarışı əməliyyatı
+        description: Altyazıdakı sözə kliklədikdə işə düşən AI əməliyyatı. Standart olaraq lüğətdir; öz əməliyyatınızı seçə bilərsiniz.
     aiQuota:
       title: Süni intellekt subtitrlərinin kvotası
       description: Süni intellektlə nitqin tanınması istənilən video üçün dəqiq subtitrlər yaradır

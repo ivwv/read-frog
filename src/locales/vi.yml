@@ -256,7 +256,7 @@ options:
         customChatComplete: Tùy chỉnh Chat Complete
         customResponses: Tùy chỉnh Responses
       attribution:
-        builtInAi: Mô hình tiêu chuẩn do Read Frog lưu trữ. Người dùng không có Ultra chỉ dùng được trong hành động AI tùy chỉnh; người dùng Ultra dùng được ở nhiều tính năng hơn.
+        builtInAi: Mô hình tiêu chuẩn do Read Frog lưu trữ. Người dùng Pro và Ultra dùng được ở mọi tính năng trong hạn mức tuần; ở gói miễn phí chỉ dùng được trong hành động AI tùy chỉnh.
         builtInAiAdvance: Mô hình nâng cao do Read Frog lưu trữ, dành riêng cho thành viên Ultra. Dùng được ở mọi tính năng AI tích hợp — dịch trang, hành động AI tùy chỉnh và hơn nữa — với hạn mức tuần dùng chung. Tiêu hao hạn mức nhanh hơn mô hình tiêu chuẩn.
       description:
         openai: Cung cấp các mô hình như GPT-4o
@@ -1432,6 +1432,9 @@ options:
       aiSegmentation:
         title: AI phân đoạn thông minh
         description: AI cắt lại phụ đề thành từng câu. Bản dịch sẽ phản hồi chậm hơn. Cần LLM mạnh; mô hình yếu có thể bỏ sót hoặc lệch dòng.
+      wordLookupAction:
+        title: Hành động tra từ
+        description: Hành động AI chạy khi bạn nhấp vào một từ trong phụ đề. Mặc định là từ điển, bạn có thể chọn hành động của riêng mình.
     aiQuota:
       title: Hạn mức phụ đề AI
       description: AI dùng công nghệ nhận dạng giọng nói để tạo phụ đề chính xác cho mọi video
